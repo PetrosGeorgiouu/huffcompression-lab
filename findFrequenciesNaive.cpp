@@ -8,7 +8,7 @@ std::unordered_map<char, int> findFrequenciesNaive(std::string txt)
 
   for (char c : txt)
   {
-    if (freqs.find(c) != freqs.begin())
+    if (freqs.find(c) != freqs.end())
     {
       freqs[c]++;
     }
