@@ -22,6 +22,16 @@ struct Node
   }
 };
 
+void deleteTree(Node *root)
+{
+  if (root != nullptr)
+  {
+    deleteTree(root->left);
+    deleteTree(root->right);
+    delete (root);
+  }
+}
+
 struct compare
 {
   bool operator()(Node *l, Node *r)
@@ -30,8 +40,8 @@ struct compare
   }
 };
 
-void printCodes(Node *root, string str,
-                unordered_map<char, string> &huffmanCode)
+void obtainHuffmanCode(Node *root, string str,
+                       unordered_map<char, string> &huffmanCode)
 {
   if (root == nullptr)
     return;
@@ -40,11 +50,11 @@ void printCodes(Node *root, string str,
     huffmanCode[root->ch] = str;
   }
 
-  printCodes(root->left, str + "0", huffmanCode);
-  printCodes(root->right, str + "1", huffmanCode);
+  obtainHuffmanCode(root->left, str + "0", huffmanCode);
+  obtainHuffmanCode(root->right, str + "1", huffmanCode);
 }
 
-unordered_map<char, string> buildHuffmanTreeNaive(string text, unordered_map<char, int> freq)
+unordered_map<char, string> buildHuffmanTreeNaive(unordered_map<char, int> freq)
 {
 
   priority_queue<Node *, vector<Node *>, compare> pq;
@@ -64,33 +74,9 @@ unordered_map<char, string> buildHuffmanTreeNaive(string text, unordered_map<cha
   Node *root = pq.top();
 
   unordered_map<char, string> huffmanCode;
-  printCodes(root, "", huffmanCode);
-
+  obtainHuffmanCode(root, "", huffmanCode);
+  deleteTree(root);
   return huffmanCode;
-  // auto decode = [&](string str)
-  // {
-  //   cout << "\nDecoded string:\n";
-  //   Node *curr = root;
-  //   for (char bit : str)
-  //   {
-  //     if (bit == '0')
-  //     {
-  //       curr = curr->left;
-  //     }
-  //     else
-  //     {
-  //       curr = curr->right;
-  //     }
-  //     if (!curr->left && !curr->right)
-  //     {
-  //       cout << curr->ch;
-  //       curr = root;
-  //     }
-  //   }
-  //   cout << "\n";
-  // };
-
-  // decode(str);
 }
 
 string encode(string txt, unordered_map<char, string> huffmanCode)
