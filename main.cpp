@@ -2,9 +2,11 @@
 #include <unordered_map>
 #include <chrono>
 #include "findFrequenciesNaive.cpp"
-#include "HuffmanCodeNaive.cpp"
+#include "HuffmanTreeNaive.cpp"
 
 using namespace std::chrono;
+
+using namespace std;
 
 int main()
 {
@@ -21,21 +23,22 @@ int main()
           << result << "\n";
 
      start = high_resolution_clock::now();
-     std::unordered_map<char, int> freqs = findFrequenciesNaive(result);
+     std::unordered_map<char, u_int64_t> freqs = findFrequenciesNaive(result);
      stop = high_resolution_clock::now();
      duration = duration_cast<nanoseconds>(stop - start);
 
      cout << "Time to get frequencies (in nanoseconds): " << duration.count() << endl;
 
      start = high_resolution_clock::now();
-     std::unordered_map<char, string> huffmanCode = buildHuffmanTreeNaive(freqs);
+
+     HuffmanTreeNaive HuffmanTree = HuffmanTreeNaive(freqs);
+
+     std::unordered_map<char, string>
+         huffmanCode = HuffmanTree.getEncodings();
      stop = high_resolution_clock::now();
      duration = duration_cast<nanoseconds>(stop - start);
 
      cout << "Time to get encoding (in nanoseconds): " << duration.count() << endl;
-     string str = encode(result, huffmanCode);
-     cout << "\nEncoded string:\n"
-          << str << "\n";
 
      auto completestop = high_resolution_clock::now();
      auto completeduration = duration_cast<nanoseconds>(completestop - completestart);

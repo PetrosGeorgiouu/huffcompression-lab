@@ -2,9 +2,9 @@
 #include <fstream>
 #include <unordered_map>
 
-std::unordered_map<char, int> findFrequenciesNaive(std::string txt)
+std::unordered_map<char, u_int64_t> findFrequenciesNaive(std::string txt)
 {
-  std::unordered_map<char, int> freqs;
+  std::unordered_map<char, u_int64_t> freqs;
 
   for (char c : txt)
   {
