@@ -1,4 +1,4 @@
-# DataCompressionPerformance
+# Huffman Data Compression Lab
 A data compression library for compressing/decompressing text files. Compares a naive implementation to a performance enhanced implementation.
 
 # An Explanation of the Naive Pipeline
