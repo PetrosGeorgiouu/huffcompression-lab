@@ -13,4 +13,4 @@ I'd also like to take some time to explain some of my optimizations and the actu
 
 ## Acknowledgments
 
-I'd like to credit GeeksforGeeks for giving an initial implementation for Huffman coding used for HuffmanCodeNaive.cpp, which I'll link here: https://www.geeksforgeeks.org/cpp/huffman-coding-in-cpp/?_x_tr_hist=true. I also used their tutorial on reading txt files for string manipulation: https://www.w3schools.com/cpp/cpp_files.asp.
+Early versions of my Huffman Coding file were inspired by a C++ implementation done by GeeksforGeeks (https://www.geeksforgeeks.org/cpp/huffman-coding-in-cpp/?_x_tr_hist=true); I also used their tutorial to read from files using C++ (https://www.w3schools.com/cpp/cpp_files.asp).
