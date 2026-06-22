@@ -58,7 +58,7 @@ int main()
      //     "data/corpus/complete_project_gutenberg_works_of_george_meredith.txt";
 
      const std::string filePath =
-         "tests/huffman_all_256_bytes_stress.txt";
+         "tests/testfile1.txt";
 
      uintmax_t fileBytes = filesystem::file_size(filePath);
      double fileMB = bytesToMB(fileBytes);

@@ -10,14 +10,15 @@ struct HuffmanTreeNaive::Node
 {
   char ch;
   uint64_t freq;
+  unsigned char tieBreak;
   Node *left;
   Node *right;
   Node(char ch, uint64_t freq)
-      : ch(ch), freq(freq), left(nullptr), right(nullptr)
+      : ch(ch), freq(freq), tieBreak(ch), left(nullptr), right(nullptr)
   {
   }
   Node(char ch, uint64_t freq, Node *left, Node *right)
-      : ch(ch), freq(freq), left(left), right(right)
+      : ch(ch), freq(freq), tieBreak(ch), left(left), right(right)
   {
   }
 };
@@ -26,7 +27,11 @@ HuffmanTreeNaive::HuffmanTreeNaive(unordered_map<char, uint64_t> &freqs)
 {
   const auto compare = [](const Node *left, Node *right)
   {
-    return left->freq > right->freq;
+    if (left->freq != right->freq)
+    {
+      return left->freq > right->freq;
+    }
+    return left->tieBreak > right->tieBreak;
   };
   priority_queue<Node *, vector<Node *>, decltype(compare)>
       pq(compare);
