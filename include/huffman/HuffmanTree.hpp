@@ -28,5 +28,7 @@ private:
       std::string code,
       std::unordered_map<char, std::string> &encodings);
 
+  void deleteHelper(Node *node);
+
   struct compare;
 };

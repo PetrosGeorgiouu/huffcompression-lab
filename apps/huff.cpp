@@ -54,8 +54,11 @@ void printStageReport(
 
 int main()
 {
+     // const std::string filePath =
+     //     "data/corpus/complete_project_gutenberg_works_of_george_meredith.txt";
+
      const std::string filePath =
-         "data/corpus/complete_project_gutenberg_works_of_george_meredith.txt";
+         "tests/huffman_all_256_bytes_stress.txt";
 
      uintmax_t fileBytes = filesystem::file_size(filePath);
      double fileMB = bytesToMB(fileBytes);
@@ -78,6 +81,11 @@ int main()
      auto encodingStop = Clock::now();
 
      auto totalStop = Clock::now();
+
+     for (auto pair : huffmanCode)
+     {
+          std::cout << pair.first << ": " << pair.second << "\n";
+     }
 
      auto frequencyDuration =
          duration_cast<Nanoseconds>(frequencyStop - frequencyStart);
