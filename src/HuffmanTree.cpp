@@ -1,9 +1,8 @@
-// C++ program to implement huffman coding
-
 #include <iostream>
 #include <queue>
 #include <unordered_map>
 #include <vector>
+#include <stack>
 #include "huffman/HuffmanTree.hpp"
 using namespace std;
 
@@ -65,16 +64,6 @@ void HuffmanTreeNaive::getEncodingsHelper(const Node *node, string str,
   getEncodingsHelper(node->right, str + "1", encodings);
 }
 
-void HuffmanTreeNaive::deleteHelper(Node *node)
-{
-  if (node != nullptr)
-  {
-    deleteHelper(node->left);
-    deleteHelper(node->right);
-    delete node;
-  }
-}
-
 unordered_map<char, string> HuffmanTreeNaive::getEncodings()
 {
   unordered_map<char, string> encodingTable;
@@ -84,5 +73,29 @@ unordered_map<char, string> HuffmanTreeNaive::getEncodings()
 
 HuffmanTreeNaive::~HuffmanTreeNaive()
 {
-  deleteHelper(this->root);
+  stack<Node *> stack;
+  Node *node = this->root;
+  while (true)
+  {
+    while (node)
+    {
+      stack.push(node);
+      stack.push(node);
+      node = node->left;
+    }
+    if (stack.empty())
+    {
+      return;
+    }
+    node = stack.top();
+    stack.pop();
+    if (stack.empty() && stack.top() == node)
+    {
+      node = node->right;
+    }
+    else
+    {
+      delete node;
+    }
+  }
 }
