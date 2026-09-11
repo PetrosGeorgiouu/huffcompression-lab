@@ -53,35 +53,36 @@ void BitWriter::writeBits(uint64_t bits, uint64_t size)
     }
 
     assert(reservoir_size < 64);
+
+    const uint8_t total =
+        static_cast<uint8_t>(reservoir_size + size);
+    if (total < 64)
+    {
+        reservoir = (reservoir << size) | bits;
+        reservoir_size = total;
+        return;
+    }
     const Reservoir combined =
         (static_cast<Reservoir>(reservoir) << size) |
         static_cast<Reservoir>(bits);
 
-    const uint8_t total =
-        static_cast<uint8_t>(reservoir_size + size);
+    const uint8_t remaining =
+        static_cast<uint8_t>(total - 64);
 
-    if (total >= 64)
-    {
-        const uint8_t remaining =
-            static_cast<uint8_t>(total - 64);
-        const uint64_t word =
-            static_cast<uint64_t>(combined >> remaining);
+    const uint64_t word =
+        static_cast<uint64_t>(combined >> remaining);
 
-        bufferWord(word);
-        const uint64_t remainingMask =
-            (uint64_t{1} << remaining) - 1;
+    bufferWord(word);
 
-        reservoir =
-            static_cast<uint64_t>(combined) & remainingMask;
+    const uint64_t remainingMask =
+        (uint64_t{1} << remaining) - 1;
 
-        reservoir_size = remaining;
-    }
-    else
-    {
-        reservoir = static_cast<uint64_t>(combined);
-        reservoir_size = total;
-    }
+    reservoir =
+        static_cast<uint64_t>(combined) & remainingMask;
+
+    reservoir_size = remaining;
 }
+
 void BitWriter::writeBit(uint8_t bit)
 {
     assert(bit == 0 || bit == 1);

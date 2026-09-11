@@ -119,20 +119,20 @@ We use this to measure the results of statistics based on the most recent change
 - **August 18, 2026:** `frequencyCounter()` now reads characters from the input file using a `4096`-byte buffer instead of reading one character at a time. The compressor’s encoding pass now also reads the input using a `4096`-byte buffer.
 - **September 4, 2026:** `BitWriter` now uses a `4096`-byte output buffer, allowing it to write blocks of bytes to the output file instead of performing a stream write for every individual byte.
 - **September 6, 2026:** Each Huffman code is now represented by an `Encoding` struct containing its encoded bits and bit length instead of an `std::string`. The compressor now passes each complete encoding to `BitWriter::writeBits()` instead of calling `BitWriter::writeBit()` separately for every bit.
-- **September 11, 2026:** `BitWriter::writeBits()` now stores pending bits in a `64`-bit reservoir, uses a `128`-bit temporary to append complete Huffman codes, and drains completed `64`-bit words into its output buffer. This replaces the previous byte-by-byte boundary processing while avoiding persistent `128`-bit state. The output buffer was increased from `4 KiB` to `64 KiB`, reducing `writev` calls from `1,047` to `131` on the benchmark workload.
+- **September 11, 2026:** `BitWriter::writeBits()` now stores pending bits in a `64`-bit reservoir and uses a fast path with `64`-bit arithmetic when an incoming Huffman code keeps the total below `64` bits. Otherwise, it uses a `128`-bit temporary to append the code, emits the oldest `64` bits, and retains the remainder. This replaces the previous byte-by-byte boundary processing while limiting wide arithmetic to calls that emit an output word. The output buffer was increased from `4 KiB` to `64 KiB`, reducing `writev` calls from `1,047` to `131` on the benchmark workload.
 
 | Metric | Result |
 |---|---:|
-| Median wall-clock latency | **93.767 ms** |
-| Mean wall-clock latency | **94.231 ms** |
-| Best observed latency | **92.109 ms** |
-| Standard deviation | **1.346 ms** |
-| Coefficient of variation | **1.43%** |
-| Median CPU time | **92.025 ms** |
-| Mean CPU time | **92.382 ms** |
-| Median throughput | **152.134 MiB/s** |
-| Mean throughput | **151.414 MiB/s** |
-| Peak observed throughput | **154.872 MiB/s** |
+| Median wall-clock latency | **87.229 ms** |
+| Mean wall-clock latency | **87.581 ms** |
+| Best observed latency | **85.690 ms** |
+| Standard deviation | **1.328 ms** |
+| Coefficient of variation | **1.52%** |
+| Median CPU time | **85.085 ms** |
+| Mean CPU time | **85.547 ms** |
+| Median throughput | **163.537 MiB/s** |
+| Mean throughput | **162.914 MiB/s** |
+| Peak observed throughput | **166.474 MiB/s** |
 
 ## Acknowledgments
 
