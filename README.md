@@ -98,16 +98,18 @@ This is our official, first implementation report on the statistics found.
 
 | Metric | Result |
 |---|---:|
-| Median wall-clock latency | **803.674 ms** |
-| Mean wall-clock latency | **801.442 ms** |
-| Best observed latency | **778.999 ms** |
-| Standard deviation | **9.525 ms** |
-| Coefficient of variation | **1.19%** |
-| Median CPU time | **801.668 ms** |
-| Mean CPU time | **799.470 ms** |
-| Median throughput | **17.750 MiB/s** |
-| Mean throughput | **17.802 MiB/s** |
-| Peak observed throughput | **18.312 MiB/s** |
+| Median wall-clock latency | **722.497 ms** |
+| Mean wall-clock latency | **725.954 ms** |
+| Best observed latency | **720.031 ms** |
+| Standard deviation | **9.894 ms** |
+| Coefficient of variation | **1.36%** |
+| Median CPU time | **721.058 ms** |
+| Mean CPU time | **724.461 ms** |
+| Median throughput | **19.744 MiB/s** |
+| Mean throughput | **19.654 MiB/s** |
+| Peak observed throughput | **19.812 MiB/s** |
+
+> **Note:** The baseline results were remeasured using the updated benchmark methodology—a pinned CPU core, `MinTime(1.0)`, and `30` repetitions—to ensure a stable, apples-to-apples comparison with the optimized implementation.
 
 ### Current Results
 
