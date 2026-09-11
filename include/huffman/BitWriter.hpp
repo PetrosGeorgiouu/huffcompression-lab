@@ -19,7 +19,7 @@ public:
 private:
 
     using Reservoir = unsigned __int128;
-    Reservoir reservoir;
+    uint64_t reservoir;
     uint8_t reservoir_size;
 
     ostream &outputFile;
