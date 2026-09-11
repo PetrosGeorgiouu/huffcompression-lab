@@ -23,7 +23,8 @@ private:
     uint8_t reservoir_size;
 
     ostream &outputFile;
-    uint8_t buffer[4096];
+    static constexpr std::size_t BUFFER_SIZE = 64 * 1024;
+    uint8_t buffer[BUFFER_SIZE];
     size_t buffer_bytes;
 
     void bufferFlush();

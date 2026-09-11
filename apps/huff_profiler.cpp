@@ -38,7 +38,7 @@ static void BM_CompressFile(benchmark::State& state)
 
 BENCHMARK(BM_CompressFile)
     ->UseRealTime()
-    ->Iterations(1);
+    ->MinTime(1.0);
 
 
 // ============================================================
@@ -101,7 +101,7 @@ BENCHMARK(BM_CompressScale)
     ->Arg(4)
     ->Arg(8)
     ->UseRealTime()
-    ->Iterations(1);
+    ->MinTime(1.0);
 
 
 // ============================================================
