@@ -14,7 +14,7 @@ array <uint64_t, 256> findFrequencies(const string &txtPath)
   while (file.read(buffer, sizeof(buffer)) || file.gcount() > 0) {
     streamsize count = file.gcount();
     for (streamsize i = 0; i < count; i++) {
-      char c = buffer[i];
+      const auto c = static_cast<unsigned char>(buffer[i]);
       ++freqs[c];
     }
   }

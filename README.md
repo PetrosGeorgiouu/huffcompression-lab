@@ -115,19 +115,22 @@ We use this to measure the results of statistics based on the most recent change
 - **August 18, 2026:** `frequencyCounter()` now reads characters from the input file using a `4096`-byte buffer instead of reading one character at a time. The compressor’s encoding pass now also reads the input using a `4096`-byte buffer.
 - **September 4, 2026:** `BitWriter` now uses a `4096`-byte output buffer, allowing it to write blocks of bytes to the output file instead of performing a stream write for every individual byte.
 - **September 6, 2026:** Each Huffman code is now represented by an `Encoding` struct containing its encoded bits and bit length instead of an `std::string`. The compressor now passes each complete encoding to `BitWriter::writeBits()` instead of calling `BitWriter::writeBit()` separately for every bit.
+- **September 11, 2026:** `BitWriter` now accumulates variable-length Huffman codes in a `128`-bit reservoir and drains completed `64`-bit words into its output buffer, replacing the previous byte-by-byte boundary processing inside `writeBits()`.
+
+
 
 | Metric | Result |
 |---|---:|
-| Median wall-clock latency | **195.940 ms** |
-| Mean wall-clock latency | **198.403 ms** |
-| Best observed latency | **191.999 ms** |
-| Standard deviation | **9.908 ms** |
-| Coefficient of variation | **4.99%** |
-| Median CPU time | **194.059 ms** |
-| Mean CPU time | **196.788 ms** |
-| Median throughput | **72.804 MiB/s** |
-| Mean throughput | **72.044 MiB/s** |
-| Peak observed throughput | **74.298 MiB/s** |
+| Median wall-clock latency | **142.350 ms** |
+| Mean wall-clock latency | **144.652 ms** |
+| Best observed latency | **134.677 ms** |
+| Standard deviation | **14.637 ms** |
+| Coefficient of variation | **10.12%** |
+| Median CPU time | **140.420 ms** |
+| Mean CPU time | **142.444 ms** |
+| Median throughput | **100.213 MiB/s** |
+| Mean throughput | **99.315 MiB/s** |
+| Peak observed throughput | **105.921 MiB/s** |
 
 
 ## Acknowledgments

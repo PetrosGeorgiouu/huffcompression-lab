@@ -19,96 +19,108 @@ void BitWriter::bufferFlush() {
 
 void BitWriter::bufferByte(uint8_t byte) {
     buffer[buffer_bytes++] = byte;
-    if (buffer_bytes == 4096) {
+    if (buffer_bytes == sizeof(buffer))
+    {
         bufferFlush();
     }
-    current_byte = 0;
-    current_size = 0;
 }
 
-BitWriter::BitWriter(ostream &output)
-    : current_byte{0}, current_size{0}, outputFile{output},buffer{{}}, buffer_bytes{0}
+void BitWriter::bufferWord(uint64_t word)
 {
+    for (int shift = 56; shift >= 0; shift -= 8)
+    {
+        const uint8_t byte =
+            static_cast<uint8_t>(word >> shift);
+
+        bufferByte(byte);
+    }
+}
+
+
+BitWriter::BitWriter(ostream &output)
+    : reservoir{0}, reservoir_size{0}, outputFile{output},buffer{{}}, buffer_bytes{0}
+{
+}
+
+void BitWriter::writeBits(uint64_t bits, uint64_t size) {
+    assert(size <= 64);
+    assert(size == 64 || (bits >> size) == 0);
+    if (size == 0) {
+        return;
+    }
+
+    assert(reservoir_size < 64);
+    reservoir <<= size;
+    reservoir |= static_cast<Reservoir>(bits);
+    reservoir_size = static_cast<uint8_t>(reservoir_size + size);
+
+    if (reservoir_size >= 64) {
+        const uint8_t remaining = static_cast<uint8_t>(reservoir_size - 64);
+        const int64_t word = static_cast<uint64_t>(reservoir >> remaining);
+        bufferWord(word);
+        reservoir_size = remaining;
+
+        if (reservoir_size == 0) {
+            reservoir = 0;
+        }
+        else {
+            const Reservoir remainingMask =
+                (Reservoir{1} << reservoir_size) - 1;
+            reservoir &= remainingMask;
+        }
+    }
 }
 
 void BitWriter::writeBit(uint8_t bit)
 {
     assert(bit == 0 || bit == 1);
-    current_byte = static_cast<uint8_t>((current_byte << 1) | bit);
-    current_size++;
-    if (current_size == 8)
-    {
-        bufferByte(current_byte);
-    }
+    writeBits(static_cast<uint64_t>(bit), 1);
 }
 
 void BitWriter::writeByte(uint8_t byte)
 {
-    if (current_size == 0) {
-        bufferByte(byte);
-        return;
-    }
-    const uint8_t bits_left = current_size;
-    const uint8_t completed_byte = static_cast<uint8_t>((current_byte << (8 - bits_left)) | (byte >> bits_left));
-    const uint8_t remain_mask = static_cast<uint8_t>((uint16_t{1} << bits_left) - 1);
-    const uint8_t remainder = static_cast<uint8_t>(byte & remain_mask);
-    bufferByte(completed_byte);
-    current_byte = remainder;
-    current_size = bits_left;
+    writeBits(static_cast<uint64_t>(byte), 8);
 }
 
-void BitWriter::writeBits(uint64_t bytes, uint64_t size) {
-    assert(size <= 64);
-    assert(size == 64 || (bytes >> size) == 0);
-     while (size > 0)
-    {
-        const uint64_t available{
-            8ULL - current_size
-        };
-
-        const uint64_t bitsToTake{
-            min(size, available)
-        };
-
-        // Select the next highest meaningful bits.
-        const uint64_t shift{
-            size - bitsToTake
-        };
-
-        const uint64_t mask{
-            (uint64_t{1} << bitsToTake) - 1
-        };
-
-        const uint64_t chunk{
-            (bytes >> shift) & mask
-        };
-
-        current_byte = static_cast<uint8_t>(
-            (static_cast<uint16_t>(current_byte) << bitsToTake) |
-            chunk);
-
-        current_size = static_cast<uint8_t>(
-            current_size + bitsToTake);
-
-        size -= bitsToTake;
-
-        if (current_size == 8)
-        {
-            bufferByte(current_byte);
-        }
-    }
-}
 
 void BitWriter::flush()
 {
-    if (current_size > 0)
+    while (reservoir_size >= 8)
     {
-        for (int i = 0; i < 8 - current_size; i++)
+        const uint8_t shift =
+            static_cast<uint8_t>(reservoir_size - 8);
+
+        const uint8_t byte =
+            static_cast<uint8_t>(reservoir >> shift);
+
+        bufferByte(byte);
+
+        reservoir_size =
+            static_cast<uint8_t>(reservoir_size - 8);
+
+        if (reservoir_size == 0)
         {
-            current_byte = static_cast<uint8_t>((current_byte << 1) | 0);
+            reservoir = 0;
         }
-        bufferByte(current_byte);
+        else
+        {
+            const Reservoir remainingMask =
+                (Reservoir{1} << reservoir_size) - 1;
+
+            reservoir &= remainingMask;
+        }
     }
+    if (reservoir_size > 0)
+    {
+        const uint8_t byte =
+            static_cast<uint8_t>(
+                reservoir << (8 - reservoir_size));
+
+        bufferByte(byte);
+    }
+    reservoir = 0;
+    reservoir_size = 0;
+
     bufferFlush();
 }
 
