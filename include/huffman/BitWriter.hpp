@@ -30,4 +30,6 @@ private:
     void bufferFlush();
     void bufferByte(uint8_t byte);
     void bufferWord(uint64_t word);
+    [[gnu::noinline]]
+    void drainBits(uint64_t bits, uint64_t size, uint8_t total);
 };

@@ -119,20 +119,20 @@ We use this to measure the results of statistics based on the most recent change
 - **August 18, 2026:** `frequencyCounter()` now reads characters from the input file using a `4096`-byte buffer instead of reading one character at a time. The compressor’s encoding pass now also reads the input using a `4096`-byte buffer.
 - **September 4, 2026:** `BitWriter` now uses a `4096`-byte output buffer, allowing it to write blocks of bytes to the output file instead of performing a stream write for every individual byte.
 - **September 6, 2026:** Each Huffman code is now represented by an `Encoding` struct containing its encoded bits and bit length instead of an `std::string`. The compressor now passes each complete encoding to `BitWriter::writeBits()` instead of calling `BitWriter::writeBit()` separately for every bit.
-- **September 11, 2026:** `BitWriter::writeBits()` now stores pending bits in a `64`-bit reservoir and uses a fast path with `64`-bit arithmetic when an incoming Huffman code keeps the total below `64` bits. Otherwise, it uses a `128`-bit temporary to append the code, emits the oldest `64` bits, and retains the remainder. This replaces the previous byte-by-byte boundary processing while limiting wide arithmetic to calls that emit an output word. The output buffer was increased from `4 KiB` to `64 KiB`, reducing `writev` calls from `1,047` to `131` on the benchmark workload.
+- **September 11, 2026:** `BitWriter::writeBits()` now stores pending bits in a `64`-bit reservoir and uses a fast path with `64`-bit arithmetic when an incoming Huffman code keeps the total below `64` bits. Otherwise, it delegates to `drainBits()`, which uses a `128`-bit temporary to append the code, emits the oldest `64` bits, and retains the remainder. Marking `drainBits()` as `[[gnu::noinline]]` keeps the draining logic separate; assembly inspection confirmed a tail jump to the helper and removal of four register save/restore pairs from `writeBits()`. This replaces the previous byte-by-byte boundary processing while limiting wide arithmetic to calls that emit an output word. The output buffer was increased from `4 KiB` to `64 KiB`, reducing `writev` calls from `1,047` to `131` on the benchmark workload.
 
 | Metric | Result |
 |---|---:|
-| Median wall-clock latency | **87.229 ms** |
-| Mean wall-clock latency | **87.581 ms** |
-| Best observed latency | **85.690 ms** |
-| Standard deviation | **1.328 ms** |
-| Coefficient of variation | **1.52%** |
-| Median CPU time | **85.085 ms** |
-| Mean CPU time | **85.547 ms** |
-| Median throughput | **163.537 MiB/s** |
-| Mean throughput | **162.914 MiB/s** |
-| Peak observed throughput | **166.474 MiB/s** |
+| Median wall-clock latency | **77.951 ms** |
+| Mean wall-clock latency | **78.159 ms** |
+| Best observed latency | **75.728 ms** |
+| Standard deviation | **1.573 ms** |
+| Coefficient of variation | **2.01%** |
+| Median CPU time | **75.638 ms** |
+| Mean CPU time | **76.217 ms** |
+| Median throughput | **183.002 MiB/s** |
+| Mean throughput | **182.584 MiB/s** |
+| Peak observed throughput | **188.372 MiB/s** |
 
 ## Acknowledgments
 
