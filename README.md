@@ -121,17 +121,16 @@ We use this to measure the results of statistics based on the most recent change
 
 | Metric | Result |
 |---|---:|
-| Median wall-clock latency | **142.350 ms** |
-| Mean wall-clock latency | **144.652 ms** |
-| Best observed latency | **134.677 ms** |
-| Standard deviation | **14.637 ms** |
-| Coefficient of variation | **10.12%** |
-| Median CPU time | **140.420 ms** |
-| Mean CPU time | **142.444 ms** |
-| Median throughput | **100.213 MiB/s** |
-| Mean throughput | **99.315 MiB/s** |
-| Peak observed throughput | **105.921 MiB/s** |
-
+| Median wall-clock latency | **133.049 ms** |
+| Mean wall-clock latency | **133.527 ms** |
+| Best observed latency | **129.997 ms** |
+| Standard deviation | **2.361 ms** |
+| Coefficient of variation | **1.77%** |
+| Median CPU time | **130.897 ms** |
+| Mean CPU time | **131.313 ms** |
+| Median throughput | **107.218 MiB/s** |
+| Mean throughput | **106.865 MiB/s** |
+| Peak observed throughput | **109.734 MiB/s** |
 
 ## Acknowledgments
 
