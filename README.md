@@ -12,7 +12,7 @@ sudo apt install libbenchmark-dev
 ```
 You can adjust this depending on what your OS requires.
 
-
+**Note:** You might also have to reconfigure the make file's performance command to what your OS's Google Benchmark installation requires.
 
 Build the executable and create the directory used to store it:
 
@@ -60,8 +60,6 @@ make clean
 I'd also like to take some time to explain some of my optimizations and the actual statistics as to how my new model compares to the naive model.
 
 I want to specify the original machine specification I used to measure performance in my original implementation. I used a Ubuntu Linux Virtual Machine.
-
-**Note:** You might also have to reconfigure the make file's performance command to what your OS's Google Benchmark installation requires.
 
 ```text
 Environment:
