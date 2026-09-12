@@ -12,7 +12,7 @@ sudo apt install libbenchmark-dev
 ```
 You can adjust this depending on what your OS requires.
 
-**Note:** You might also have to reconfigure the make file's performance command to what your OS's Google Benchmark installation requires.
+**Note:** You might also have to reconfigure the make file's performance command to what your OS's Google Benchmark installation requires. I'm still working on making this also work on macOS.
 
 Build the executable and create the directory used to store it:
 
@@ -43,9 +43,7 @@ to measure how well our compressor compressed a corpus of 11 text files.
 After each implementation improvement, I use
 
 ```bash
-taskset -c 2 ./build/huff_profiler \
-    --benchmark_filter='BM_CompressFile.*' \
-    --benchmark_repetitions=30
+make profile
 ```
 to run the compressor 30 times on "data/corpus/complete_project_gutenberg_works_of_george_meredith.txt" to measure performance. We will discuss this later.
 
