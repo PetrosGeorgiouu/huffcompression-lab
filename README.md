@@ -3,7 +3,7 @@ A data compression library for compressing/decompressing text files. Compares a 
 
 # How to run
 
-The only dependency required is to install Google Benchmark to test performance. This is optional since it's not needed for compression correctness, but here is the command to run if you would like to run the benchmark.
+The only dependency required is to install Google Benchmark to test performance. This is to allow the Makefile to compile.
 
 This is the installation for Linux on Ubunto:
 
