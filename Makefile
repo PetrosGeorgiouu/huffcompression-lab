@@ -26,7 +26,9 @@ TESTS := tests/tests.cpp
 INPUT ?=
 OUTPUT ?=
 CORPUS_DIR ?= data/corpus
-BENCH_ARGS ?=
+BENCH_CPU ?= 2
+BENCH_ARGS ?= --benchmark_filter='BM_CompressFile.*' \
+              --benchmark_repetitions=30
 
 BENCHMARK_INCLUDE := $(HOME)/benchmark/include
 BENCHMARK_LIB := $(HOME)/benchmark/build-release/src/libbenchmark.a
@@ -67,7 +69,11 @@ compress: build/huff
 
 
 profile: build/huff_profiler
+ifeq ($(shell uname -s),Linux)
+	taskset -c $(BENCH_CPU) ./build/huff_profiler $(BENCH_ARGS)
+else
 	./build/huff_profiler $(BENCH_ARGS)
+endif
 
 
 corpus: build/corpus
