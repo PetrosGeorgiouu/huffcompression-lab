@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include "huffman/BitWriter.hpp"
 #include "huffman/FrequencyTable.hpp"
+#include "huffman/BitReader.hpp"
 
 using namespace std;
 
@@ -21,6 +22,7 @@ public:
     Encoding(uint64_t encoding, uint64_t size) : encoding(encoding), size(size) {}
     };
   explicit HuffmanTree(array <uint64_t, 256> &freqs);
+  // explicit HuffmanTree(BitReader& reader);
 
   ~HuffmanTree();
 

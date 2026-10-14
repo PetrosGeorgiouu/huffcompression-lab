@@ -67,6 +67,12 @@ HuffmanTree::HuffmanTree(array <uint64_t, 256> &freqs)
   this->root = pq.top();
 }
 
+// HuffmanTree::HuffmanTree(BitReader& reader)
+//   : root{nullptr}
+// {
+  
+// }
+
 void HuffmanTree::getEncodingsHelper(const Node *node, uint64_t code, uint64_t size,
     array<Encoding, 256> &encodings)
 {

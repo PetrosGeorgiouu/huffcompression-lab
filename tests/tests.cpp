@@ -5,11 +5,13 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "huffman/BitReader.hpp"
 #include "huffman/BitWriter.hpp"
 #include "huffman/Compression.hpp"
 #include "huffman/FrequencyTable.hpp"
@@ -1166,6 +1168,404 @@ namespace
     }
 
     // -----------------------------------------------------------------------------
+    // BitReader tests
+    // -----------------------------------------------------------------------------
+
+    std::istringstream makeBitReaderInput(const std::vector<uint8_t> &bytes)
+    {
+        return std::istringstream{
+            std::string{bytes.begin(), bytes.end()},
+            std::ios::in | std::ios::binary};
+    }
+
+    template <typename ReadFunction>
+    void expectReadError(
+        ReadFunction &&readFunction,
+        const std::string &message)
+    {
+        try
+        {
+            readFunction();
+        }
+        catch (const TestFailure &)
+        {
+            throw;
+        }
+        catch (const std::runtime_error &)
+        {
+            return;
+        }
+
+        throw TestFailure{message};
+    }
+
+    TestSuite runBitReaderTests()
+    {
+        TestSuite suite{"BitReader"};
+
+        std::cout << "\n=== BitReader ===\n";
+
+        // Fixed byte fixtures check the reader independently of BitWriter.
+        suite.run("readBit rejects empty input", []
+        {
+            auto input{makeBitReaderInput({})};
+            BitReader reader{input};
+
+            expectReadError(
+                [&reader] { (void)reader.readBit(); },
+                "Reading an empty input should throw instead of producing a bit");
+        });
+
+        suite.run("zero-length reads return zero without consuming bits", []
+        {
+            auto emptyInput{makeBitReaderInput({})};
+            BitReader emptyReader{emptyInput};
+            expectEqual(emptyReader.readBits(0), uint64_t{0},
+                        "A zero-length read should succeed even on empty input");
+
+            auto input{makeBitReaderInput({0xA5})};
+            BitReader reader{input};
+            expectEqual(reader.readBits(0), uint64_t{0},
+                        "A zero-length read before the first refill should return zero");
+            expectEqual(reader.readBits(3), uint64_t{0b101},
+                        "A zero-length read consumed the beginning of the input");
+            expectEqual(reader.readBits(0), uint64_t{0},
+                        "A zero-length read within a buffer should return zero");
+            expectEqual(reader.readBits(5), uint64_t{0b00101},
+                        "A zero-length read changed the current bit position");
+            expectEqual(reader.readBits(0), uint64_t{0},
+                        "A zero-length read at the end should return zero");
+        });
+
+        suite.run("readBit reads most-significant bit first", []
+        {
+            auto input{makeBitReaderInput({0xA5})};
+            BitReader reader{input};
+            const std::array<uint8_t, 8> expected{1, 0, 1, 0, 0, 1, 0, 1};
+
+            for (uint8_t bit : expected)
+            {
+                expectEqual(reader.readBit(), bit,
+                            "Expected 0xA5 to be read as 10100101");
+            }
+        });
+
+        suite.run("readByte preserves all 256 byte values across refills", []
+        {
+            std::vector<uint8_t> bytes;
+            for (unsigned value{0}; value < 256; ++value)
+            {
+                bytes.push_back(static_cast<uint8_t>(value));
+            }
+
+            auto input{makeBitReaderInput(bytes)};
+            BitReader reader{input};
+
+            for (uint8_t expected : bytes)
+            {
+                expectEqual(reader.readByte(), expected,
+                            "Byte value was corrupted: " + std::to_string(expected));
+            }
+
+            expectReadError(
+                [&reader] { (void)reader.readByte(); },
+                "Reading beyond the last complete buffer should throw");
+        });
+
+        suite.run("readBits preserves leading zeroes and their positions", []
+        {
+            auto input{makeBitReaderInput({0x20, 0xE0})};
+            BitReader reader{input};
+
+            expectEqual(reader.readBits(3), uint64_t{0b001},
+                        "Expected the first three bits to represent 001");
+            expectEqual(reader.readBits(5), uint64_t{0},
+                        "Leading zeroes must count toward the number of consumed bits");
+            expectEqual(reader.readBits(3), uint64_t{0b111},
+                        "The next byte should begin at the correct position");
+            expectEqual(reader.readBits(5), uint64_t{0},
+                        "Expected the remaining five zero bits");
+        });
+
+        suite.run("readBits calls remain contiguous across byte boundaries", []
+        {
+            auto input{makeBitReaderInput({0xB9, 0x80})};
+            BitReader reader{input};
+
+            expectEqual(reader.readBits(3), uint64_t{0b101},
+                        "Expected the first three bits to be 101");
+            expectEqual(reader.readBits(6), uint64_t{0b110011},
+                        "Expected the next six bits to cross the byte boundary");
+            // The bit reader exposes padding stored in the last byte too.
+            expectEqual(reader.readBits(7), uint64_t{0},
+                        "Expected seven right-padding zero bits");
+            expectReadError(
+                [&reader] { (void)reader.readBit(); },
+                "Only padding actually stored in the input may be read");
+        });
+
+        suite.run("readBits supports every width from 1 through 64", []
+        {
+            constexpr uint64_t word{UINT64_C(0xFEDCBA9876543210)};
+
+            for (uint64_t width{1}; width <= 64; ++width)
+            {
+                auto input{makeBitReaderInput(
+                    {0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10})};
+                BitReader reader{input};
+
+                expectEqual(reader.readBits(width), word >> (64 - width),
+                            "Incorrect result for bit width " + std::to_string(width));
+
+                // Since width >= 1, remaining is at most 63: no shift by 64.
+                const uint64_t remaining{64 - width};
+                const uint64_t mask{(uint64_t{1} << remaining) - 1};
+                expectEqual(reader.readBits(remaining), word & mask,
+                            "A read consumed the wrong number of bits at width " +
+                                std::to_string(width));
+            }
+        });
+
+        suite.run("readBits supports zero and all-one 64-bit words", []
+        {
+            for (uint8_t byte : std::array<uint8_t, 2>{0x00, 0xFF})
+            {
+                auto input{makeBitReaderInput(std::vector<uint8_t>(8, byte))};
+                BitReader reader{input};
+                const uint64_t expected{
+                    byte == 0 ? uint64_t{0} : UINT64_MAX};
+
+                expectEqual(reader.readBits(64), expected,
+                            "A full-width read lost or introduced bits");
+            }
+        });
+
+        suite.run("mixed bit byte and bulk reads share one cursor", []
+        {
+            auto input{makeBitReaderInput({0xB4, 0xA6})};
+            BitReader reader{input};
+
+            expectEqual(reader.readBits(3), uint64_t{0b101},
+                        "Expected the three-bit prefix");
+            expectEqual(reader.readByte(), uint8_t{0xA5},
+                        "readByte should read the next eight bits while unaligned");
+            expectEqual(reader.readBit(), uint8_t{0},
+                        "readBit should continue immediately after readByte");
+            expectEqual(reader.readBits(4), uint64_t{0b0110},
+                        "Mixed reads lost the four-bit suffix");
+        });
+
+        suite.run("readByte decodes an unaligned leaf character", []
+        {
+            auto input{makeBitReaderInput({0xB0, 0x80})};
+            BitReader reader{input};
+
+            expectEqual(reader.readBit(), uint8_t{1},
+                        "Expected the Huffman leaf marker");
+            expectEqual(reader.readByte(), uint8_t{'a'},
+                        "Expected the unaligned character in 1|01100001");
+            expectEqual(reader.readBits(7), uint64_t{0},
+                        "Expected seven padding bits after the leaf character");
+        });
+
+        suite.run("readBit advances correctly across the 64-bit boundary", []
+        {
+            auto input{makeBitReaderInput(
+                {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x80})};
+            BitReader reader{input};
+
+            expectEqual(reader.readBits(63), uint64_t{0},
+                        "Expected 63 zero bits before the end of the first buffer");
+            expectEqual(reader.readBit(), uint8_t{1},
+                        "The last bit of the first buffer was skipped");
+            expectEqual(reader.readBit(), uint8_t{1},
+                        "The first bit of the new buffer was skipped");
+            expectEqual(reader.readBits(7), uint64_t{0},
+                        "Expected the remainder of the final byte");
+        });
+
+        suite.run("readBits combines data from both sides of a refill", []
+        {
+            auto input{makeBitReaderInput(
+                {0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xB4})};
+            BitReader reader{input};
+
+            expectEqual(reader.readBits(60), UINT64_C(0x0123456789ABCDE),
+                        "Expected the first 60 bits in input order");
+            expectEqual(reader.readBits(8), uint64_t{0xFB},
+                        "Expected four old bits and four new bits to form 0xFB");
+            expectEqual(reader.readBits(4), uint64_t{0x4},
+                        "Crossing a refill consumed too many bits");
+        });
+
+        suite.run("readByte can span the 64-bit refill boundary", []
+        {
+            auto input{makeBitReaderInput(
+                {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x96})};
+            BitReader reader{input};
+
+            expectEqual(reader.readBits(63), uint64_t{0},
+                        "Expected the zero prefix");
+            expectEqual(reader.readByte(), uint8_t{0xCB},
+                        "Expected byte 1|1001011 to cross the refill boundary");
+            expectEqual(reader.readBit(), uint8_t{0},
+                        "Expected the last bit of 0x96 to remain unread");
+        });
+
+        suite.run("a full 64-bit read can begin at an unaligned position", []
+        {
+            // Bits: 1 | 0x0123456789ABCDEF | seven zero padding bits.
+            auto input{makeBitReaderInput(
+                {0x80, 0x91, 0xA2, 0xB3, 0xC4, 0xD5, 0xE6, 0xF7, 0x80})};
+            BitReader reader{input};
+
+            expectEqual(reader.readBit(), uint8_t{1},
+                        "Expected the one-bit prefix");
+            expectEqual(reader.readBits(64), UINT64_C(0x0123456789ABCDEF),
+                        "An unaligned full-width read corrupted the word");
+            expectEqual(reader.readBits(7), uint64_t{0},
+                        "Expected padding after the full-width read");
+        });
+
+        suite.run("partial refills expose only the bytes actually loaded", []
+        {
+            // Cover every short refill length, initially and after a full buffer.
+            for (std::size_t prefix : std::array<std::size_t, 2>{0, 8})
+            {
+                for (std::size_t tail{1}; tail < 8; ++tail)
+                {
+                    std::vector<uint8_t> bytes(prefix, 0xFF);
+                    for (std::size_t i{0}; i < tail; ++i)
+                    {
+                        bytes.push_back(static_cast<uint8_t>(0x80 | (i * 13 + tail)));
+                    }
+
+                    auto input{makeBitReaderInput(bytes)};
+                    BitReader reader{input};
+
+                    if (prefix != 0)
+                    {
+                        expectEqual(reader.readBits(64), UINT64_MAX,
+                                    "Expected the complete all-one prefix");
+                    }
+
+                    for (std::size_t i{prefix}; i < bytes.size(); ++i)
+                    {
+                        expectEqual(reader.readByte(), bytes[i],
+                                    "Incorrect byte in a partial refill of length " +
+                                        std::to_string(tail));
+                    }
+
+                    expectReadError(
+                        [&reader] { (void)reader.readBit(); },
+                        "A partial refill exposed bits beyond the actual input");
+                }
+            }
+        });
+
+        suite.run("EOF after exactly eight bytes throws on further reads", []
+        {
+            auto input{makeBitReaderInput(
+                {0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF})};
+            BitReader reader{input};
+
+            expectEqual(reader.readBits(64), UINT64_C(0x0123456789ABCDEF),
+                        "Expected the complete input word");
+            expectReadError([&reader] { (void)reader.readBit(); },
+                            "readBit should throw at EOF");
+            expectReadError([&reader] { (void)reader.readByte(); },
+                            "readByte should continue to throw after EOF");
+            expectReadError([&reader] { (void)reader.readBits(64); },
+                            "readBits should continue to throw after EOF");
+            expectEqual(reader.readBits(0), uint64_t{0},
+                        "A zero-length read should still succeed after EOF");
+        });
+
+        suite.run("a final zero byte is data rather than EOF", []
+        {
+            auto input{makeBitReaderInput({0xA5, 0x00})};
+            BitReader reader{input};
+
+            expectEqual(reader.readByte(), uint8_t{0xA5},
+                        "Expected the first byte");
+            expectEqual(reader.readByte(), uint8_t{0x00},
+                        "The final zero byte was mistaken for EOF");
+            expectReadError([&reader] { (void)reader.readBit(); },
+                            "The input should end after the actual zero byte");
+        });
+
+        suite.run("readBits throws if fewer bits remain than requested", []
+        {
+            auto input{makeBitReaderInput({0xAB})};
+            BitReader reader{input};
+
+            expectReadError(
+                [&reader] { (void)reader.readBits(9); },
+                "An eight-bit input cannot satisfy a nine-bit request");
+        });
+
+        suite.run("readByte throws when only part of a byte remains", []
+        {
+            auto input{makeBitReaderInput({0xA0})};
+            BitReader reader{input};
+
+            expectEqual(reader.readBits(3), uint64_t{0b101},
+                        "Expected the three-bit prefix");
+            expectReadError(
+                [&reader] { (void)reader.readByte(); },
+                "Five remaining bits cannot satisfy a readByte request");
+        });
+
+        suite.run("stream failures are reported instead of producing data", []
+        {
+            for (auto state : {std::ios::badbit, std::ios::failbit})
+            {
+                auto input{makeBitReaderInput({0xA5})};
+                input.setstate(state);
+                BitReader reader{input};
+
+                expectReadError(
+                    [&reader] { (void)reader.readBit(); },
+                    "A failed input stream should cause a read error");
+            }
+        });
+
+        suite.run("binary file input handles a full and a partial refill", []
+        {
+            const std::vector<uint8_t> bytes{
+                0x00, 0x80, 0xFF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF};
+            const fs::path filename{TEST_OUTPUT_DIRECTORY / "bitreader_binary_input.bin"};
+            writeTestFile(filename, std::string{bytes.begin(), bytes.end()});
+
+            std::ifstream input{filename, std::ios::binary};
+            expect(input.is_open(), "Could not open the BitReader input fixture");
+            BitReader reader{input};
+
+            expectEqual(reader.readBits(64), UINT64_C(0x0080FF0123456789),
+                        "The binary file's first eight bytes were corrupted");
+            expectEqual(reader.readBits(24), UINT64_C(0xABCDEF),
+                        "The final three-byte refill was corrupted");
+            expectReadError([&reader] { (void)reader.readBit(); },
+                            "Reading beyond the binary file should throw");
+        });
+
+        suite.run("reading starts at the stream's current position", []
+        {
+            auto input{makeBitReaderInput({'H', 'U', 'F', 'F', 0xB9, 0x80})};
+            input.ignore(4);
+            BitReader reader{input};
+
+            expectEqual(reader.readBits(3), uint64_t{0b101},
+                        "The reader should start after the already-consumed header");
+            expectEqual(reader.readBits(6), uint64_t{0b110011},
+                        "Reading after a header changed the payload bit order");
+        });
+
+        suite.printSummary();
+        return suite;
+    }
+
+    // -----------------------------------------------------------------------------
     // Compressor tests
     // -----------------------------------------------------------------------------
 
@@ -1284,6 +1684,9 @@ int main()
     const TestSuite bitWriterSuite{
         runBitWriterTests()};
 
+    const TestSuite bitReaderSuite{
+        runBitReaderTests()};
+
     const TestSuite compressorSuite{
         runCompressorTests()};
 
@@ -1292,6 +1695,7 @@ int main()
         huffmanSuite.passed() +
         serializationSuite.passed() +
         bitWriterSuite.passed() +
+        bitReaderSuite.passed() +
         compressorSuite.passed()};
 
     const std::size_t totalTests{
@@ -1299,6 +1703,7 @@ int main()
         huffmanSuite.total() +
         serializationSuite.total() +
         bitWriterSuite.total() +
+        bitReaderSuite.total() +
         compressorSuite.total()};
 
     std::cout

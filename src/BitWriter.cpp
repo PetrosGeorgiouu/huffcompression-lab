@@ -31,7 +31,6 @@ void BitWriter::bufferWord(uint64_t word)
     {
         const uint8_t byte =
             static_cast<uint8_t>(word >> shift);
-
         bufferByte(byte);
     }
 }
