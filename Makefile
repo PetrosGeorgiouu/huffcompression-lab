@@ -32,8 +32,14 @@ BENCH_CPU ?= 2
 BENCH_ARGS ?= --benchmark_filter='BM_CompressFile.*' \
               --benchmark_repetitions=30
 
+ifeq ($(shell uname -s),Darwin)
+BENCHMARK_PREFIX := $(shell brew --prefix google-benchmark)
+BENCHMARK_INCLUDE := $(BENCHMARK_PREFIX)/include
+BENCHMARK_LIB := $(BENCHMARK_PREFIX)/lib/libbenchmark.a
+else
 BENCHMARK_INCLUDE := $(HOME)/benchmark/include
 BENCHMARK_LIB := $(HOME)/benchmark/build-release/src/libbenchmark.a
+endif
 
 build/huff: apps/huff.cpp $(SOURCES) $(HEADERS)
 	mkdir -p build

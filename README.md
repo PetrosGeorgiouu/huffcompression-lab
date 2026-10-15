@@ -1,4 +1,5 @@
 # Huffman Data Compression Lab
+
 A data compression library for compressing/decompressing text files. Compares a naive implementation to a performance enhanced implementation.
 
 # How to run
@@ -10,6 +11,7 @@ This is the installation for Linux on Ubunto:
 ```bash
 sudo apt install libbenchmark-dev
 ```
+
 You can adjust this depending on what your OS requires.
 
 **Note:** You might also have to reconfigure the make file's performance command to what your OS's Google Benchmark installation requires. I'm still working on making this also work on macOS.
@@ -19,13 +21,15 @@ Build the executable and create the directory used to store it:
 ```bash
 make build
 ```
+
 Here's how to use the compressor.
 
 ```bash
 make compress \
   INPUT= [input file path] \
-  OUTPUT= [output file path]
+  OUTPUT = [output file path]
 ```
+
 This takes a txt file from the input file path, compresses it, and stores it in the output file path. Note: both must exist for the compressor to succeed.
 
 You can also run its test cases with:
@@ -33,11 +37,13 @@ You can also run its test cases with:
 ```bash
 make tests
 ```
+
 After finishing the compressor, I used
 
 ```bash
 make corpus
 ```
+
 to measure how well our compressor compressed a corpus of 11 text files.
 
 After each implementation improvement, I use
@@ -45,6 +51,7 @@ After each implementation improvement, I use
 ```bash
 make profile
 ```
+
 to run the compressor 30 times on "data/corpus/complete_project_gutenberg_works_of_george_meredith.txt" to measure performance. We will discuss this later.
 
 After testing, remove the generated build directory and its contents:
@@ -90,14 +97,14 @@ Toolchain:
 
 You can reference this as
 
-| Component | Value |
-|---|---:|
-| CPU cores | 4 |
-| CPU frequency | ~1996.65 MHz |
-| L1 Data Cache | 48 KiB × 4 |
-| L1 Instruction Cache | 32 KiB × 4 |
-| L2 Cache | 512 KiB × 4 |
-| L3 Cache | 6144 KiB shared |
+| Component            |           Value |
+| -------------------- | --------------: |
+| CPU cores            |               4 |
+| CPU frequency        |    ~1996.65 MHz |
+| L1 Data Cache        |      48 KiB × 4 |
+| L1 Instruction Cache |      32 KiB × 4 |
+| L2 Cache             |     512 KiB × 4 |
+| L3 Cache             | 6144 KiB shared |
 
 ### Baseline Results
 
@@ -105,18 +112,18 @@ First, let's discuss a constant baseline template for how we will measure if per
 
 This is our official, first implementation report on the statistics found.
 
-| Metric | Result |
-|---|---:|
-| Median wall-clock latency | **722.497 ms** |
-| Mean wall-clock latency | **725.954 ms** |
-| Best observed latency | **720.031 ms** |
-| Standard deviation | **9.894 ms** |
-| Coefficient of variation | **1.36%** |
-| Median CPU time | **721.058 ms** |
-| Mean CPU time | **724.461 ms** |
-| Median throughput | **19.744 MiB/s** |
-| Mean throughput | **19.654 MiB/s** |
-| Peak observed throughput | **19.812 MiB/s** |
+| Metric                    |           Result |
+| ------------------------- | ---------------: |
+| Median wall-clock latency |   **722.497 ms** |
+| Mean wall-clock latency   |   **725.954 ms** |
+| Best observed latency     |   **720.031 ms** |
+| Standard deviation        |     **9.894 ms** |
+| Coefficient of variation  |        **1.36%** |
+| Median CPU time           |   **721.058 ms** |
+| Mean CPU time             |   **724.461 ms** |
+| Median throughput         | **19.744 MiB/s** |
+| Mean throughput           | **19.654 MiB/s** |
+| Peak observed throughput  | **19.812 MiB/s** |
 
 > **Note:** The baseline results were remeasured using the updated benchmark methodology—a pinned CPU core, `MinTime(1.0)`, and `30` repetitions—to ensure a stable, apples-to-apples comparison with the optimized implementation.
 
@@ -130,18 +137,18 @@ We use this to measure the results of statistics based on the most recent change
 - **September 6, 2026:** Each Huffman code is now represented by an `Encoding` struct containing its encoded bits and bit length instead of an `std::string`. The compressor now passes each complete encoding to `BitWriter::writeBits()` instead of calling `BitWriter::writeBit()` separately for every bit.
 - **September 11, 2026:** `BitWriter::writeBits()` now stores pending bits in a `64`-bit reservoir and uses a fast path with `64`-bit arithmetic when an incoming Huffman code keeps the total below `64` bits. Otherwise, it delegates to `drainBits()`, which uses a `128`-bit temporary to append the code, emits the oldest `64` bits, and retains the remainder. Marking `drainBits()` as `[[gnu::noinline]]` keeps the draining logic separate; assembly inspection confirmed a tail jump to the helper and removal of four register save/restore pairs from `writeBits()`. This replaces the previous byte-by-byte boundary processing while limiting wide arithmetic to calls that emit an output word. The output buffer was increased from `4 KiB` to `64 KiB`, reducing `writev` calls from `1,047` to `131` on the benchmark workload.
 
-| Metric | Result |
-|---|---:|
-| Median wall-clock latency | **77.951 ms** |
-| Mean wall-clock latency | **78.159 ms** |
-| Best observed latency | **75.728 ms** |
-| Standard deviation | **1.573 ms** |
-| Coefficient of variation | **2.01%** |
-| Median CPU time | **75.638 ms** |
-| Mean CPU time | **76.217 ms** |
-| Median throughput | **183.002 MiB/s** |
-| Mean throughput | **182.584 MiB/s** |
-| Peak observed throughput | **188.372 MiB/s** |
+| Metric                    |            Result |
+| ------------------------- | ----------------: |
+| Median wall-clock latency |     **77.951 ms** |
+| Mean wall-clock latency   |     **78.159 ms** |
+| Best observed latency     |     **75.728 ms** |
+| Standard deviation        |      **1.573 ms** |
+| Coefficient of variation  |         **2.01%** |
+| Median CPU time           |     **75.638 ms** |
+| Mean CPU time             |     **76.217 ms** |
+| Median throughput         | **183.002 MiB/s** |
+| Mean throughput           | **182.584 MiB/s** |
+| Peak observed throughput  | **188.372 MiB/s** |
 
 ## Acknowledgments
 
