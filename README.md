@@ -4,57 +4,90 @@ A data compression library for compressing/decompressing text files. Compares a 
 
 # How to run
 
-The only dependency required is to install Google Benchmark to test performance. This is to allow the Makefile to compile.
+Tested on Linux (Ubuntu) and macOS.
 
-This is the installation for Linux on Ubunto:
+### Download
+
+Select **Code → Download ZIP** on this repository's GitHub page and extract the archive, or clone it using its HTTPS URL:
 
 ```bash
-sudo apt install libbenchmark-dev
+git clone <repository-url>
 ```
 
-You can adjust this depending on what your OS requires.
+Open a terminal in the downloaded repository's root directory—the folder containing the `Makefile`.
 
-**Note:** You might also have to reconfigure the make file's performance command to what your OS's Google Benchmark installation requires. I'm still working on making this also work on macOS.
+### Requirements
 
-Build the executable and create the directory used to store it:
+You need a C++17-capable compiler and `make`.
+
+Google Benchmark is used for performance measurements. Although it is only used for benchmarking, the current Makefile setup requires it to be installed before building.
+
+**Linux (Ubuntu):**
+
+```bash
+sudo apt update
+sudo apt install build-essential clang libbenchmark-dev
+```
+
+**macOS:**
+
+Install Apple's command-line developer tools if they are not already installed:
+
+```bash
+xcode-select --install
+```
+
+With Homebrew installed, install Google Benchmark:
+
+```bash
+brew install google-benchmark
+```
+
+If the Makefile cannot locate Google Benchmark, adjust its include and library paths to match your installation. On macOS, find its installation directory with:
+
+```bash
+brew --prefix google-benchmark
+```
+
+### Build and run
+
+Build the executable and create its output directory:
 
 ```bash
 make build
 ```
 
-Here's how to use the compressor.
+Compress a text file:
 
 ```bash
 make compress \
-  INPUT= [input file path] \
-  OUTPUT = [output file path]
+  INPUT="path/to/input.txt" \
+  OUTPUT="path/to/output.huff"
 ```
 
-This takes a txt file from the input file path, compresses it, and stores it in the output file path. Note: both must exist for the compressor to succeed.
+Replace these paths with your input and output locations.
 
-You can also run its test cases with:
+Run the test cases:
 
 ```bash
 make tests
 ```
 
-After finishing the compressor, I used
+Measure compression effectiveness across the corpus of 11 text files:
 
 ```bash
 make corpus
 ```
 
-to measure how well our compressor compressed a corpus of 11 text files.
-
-After each implementation improvement, I use
+Run the performance benchmark:
 
 ```bash
 make profile
 ```
 
-to run the compressor 30 times on "data/corpus/complete_project_gutenberg_works_of_george_meredith.txt" to measure performance. We will discuss this later.
+This benchmarks the compressor with 30 repetitions using `data/corpus/complete_project_gutenberg_works_of_george_meredith.txt`. Ensure the benchmark input file is available at that path. Results are discussed in the Performance Analysis section below.
 
-After testing, remove the generated build directory and its contents:
+Remove the generated build directory and its contents:
 
 ```bash
 make clean
@@ -140,16 +173,16 @@ We use this to measure the results of statistics based on the most recent change
 
 | Metric                    |            Result |
 | ------------------------- | ----------------: |
-| Median wall-clock latency |     **73.771 ms** |
-| Mean wall-clock latency   |     **76.328 ms** |
-| Best observed latency     |     **70.681 ms** |
-| Standard deviation        |      **6.430 ms** |
-| Coefficient of variation  |         **8.42%** |
-| Median CPU time           |     **71.476 ms** |
-| Mean CPU time             |     **72.645 ms** |
-| Median throughput         | **193.370 MiB/s** |
-| Mean throughput           | **188.013 MiB/s** |
-| Peak observed throughput  | **201.825 MiB/s** |
+| Median wall-clock latency |     **67.351 ms** |
+| Mean wall-clock latency   |     **70.397 ms** |
+| Best observed latency     |     **65.345 ms** |
+| Standard deviation        |      **8.932 ms** |
+| Coefficient of variation  |        **12.69%** |
+| Median CPU time           |     **64.800 ms** |
+| Mean CPU time             |     **67.396 ms** |
+| Median throughput         | **211.804 MiB/s** |
+| Mean throughput           | **204.995 MiB/s** |
+| Peak observed throughput  | **218.304 MiB/s** |
 
 ## Acknowledgments
 
