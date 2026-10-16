@@ -136,19 +136,20 @@ We use this to measure the results of statistics based on the most recent change
 - **September 4, 2026:** `BitWriter` now uses a `4096`-byte output buffer, allowing it to write blocks of bytes to the output file instead of performing a stream write for every individual byte.
 - **September 6, 2026:** Each Huffman code is now represented by an `Encoding` struct containing its encoded bits and bit length instead of an `std::string`. The compressor now passes each complete encoding to `BitWriter::writeBits()` instead of calling `BitWriter::writeBit()` separately for every bit.
 - **September 11, 2026:** `BitWriter::writeBits()` now stores pending bits in a `64`-bit reservoir and uses a fast path with `64`-bit arithmetic when an incoming Huffman code keeps the total below `64` bits. Otherwise, it delegates to `drainBits()`, which uses a `128`-bit temporary to append the code, emits the oldest `64` bits, and retains the remainder. Marking `drainBits()` as `[[gnu::noinline]]` keeps the draining logic separate; assembly inspection confirmed a tail jump to the helper and removal of four register save/restore pairs from `writeBits()`. This replaces the previous byte-by-byte boundary processing while limiting wide arithmetic to calls that emit an output word. The output buffer was increased from `4 KiB` to `64 KiB`, reducing `writev` calls from `1,047` to `131` on the benchmark workload.
+- **October 16, 2026:** Implemented a `UniquePtrPriorityQueue` class to allow for a priority queue to remove `std::unique_ptr` entries via `std::move` operations. Replace raw pointers with `std::unique_ptr` in `HuffmanTree` class and leveraged the `UniquePtrPriorityQueue` class during class construction.
 
 | Metric                    |            Result |
 | ------------------------- | ----------------: |
-| Median wall-clock latency |     **77.951 ms** |
-| Mean wall-clock latency   |     **78.159 ms** |
-| Best observed latency     |     **75.728 ms** |
-| Standard deviation        |      **1.573 ms** |
-| Coefficient of variation  |         **2.01%** |
-| Median CPU time           |     **75.638 ms** |
-| Mean CPU time             |     **76.217 ms** |
-| Median throughput         | **183.002 MiB/s** |
-| Mean throughput           | **182.584 MiB/s** |
-| Peak observed throughput  | **188.372 MiB/s** |
+| Median wall-clock latency |     **73.771 ms** |
+| Mean wall-clock latency   |     **76.328 ms** |
+| Best observed latency     |     **70.681 ms** |
+| Standard deviation        |      **6.430 ms** |
+| Coefficient of variation  |         **8.42%** |
+| Median CPU time           |     **71.476 ms** |
+| Mean CPU time             |     **72.645 ms** |
+| Median throughput         | **193.370 MiB/s** |
+| Mean throughput           | **188.013 MiB/s** |
+| Peak observed throughput  | **201.825 MiB/s** |
 
 ## Acknowledgments
 

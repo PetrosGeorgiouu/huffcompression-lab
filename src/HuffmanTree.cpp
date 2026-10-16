@@ -1,145 +1,134 @@
-#include <iostream>
-#include <queue>
-#include <unordered_map>
-#include <vector>
-#include <array>
-#include <cstdint>
 #include <algorithm>
+#include <memory>
+#include <utility>
+
 #include "huffman/BitWriter.hpp"
 #include "huffman/HuffmanTree.hpp"
-using namespace std;
+#include "huffman/UniquePtrPriorityQueue.hpp"
 
 struct HuffmanTree::Node
 {
   char ch;
   uint64_t freq;
-  Node *left;
-  Node *right;
-  Node(char ch, uint64_t freq)
-      : ch(ch), freq(freq), left(nullptr), right(nullptr)
+  std::unique_ptr<Node> left;
+  std::unique_ptr<Node> right;
+
+  Node(char ch, uint64_t freq,
+       std::unique_ptr<Node> left = nullptr,
+       std::unique_ptr<Node> right = nullptr)
+      : ch(ch), freq(freq), left(std::move(left)), right(std::move(right))
   {
   }
-  Node(char ch, uint64_t freq, Node *left, Node *right)
-      : ch(ch), freq(freq), left(left), right(right)
+
+  bool isLeaf() const noexcept
   {
-  }
-  bool isLeaf() const
-  {
-    return left == nullptr && right == nullptr;
+    return !left && !right;
   }
 };
 
-HuffmanTree::HuffmanTree(array <uint64_t, 256> &freqs)
+HuffmanTree::HuffmanTree(std::array<uint64_t, 256> &freqs)
 {
-  const auto compare = [](const Node *left, Node *right)
+  const auto compare = [](const Node &left, const Node &right) noexcept
   {
-    return left->freq > right->freq;
+    return left.freq > right.freq;
   };
 
-  priority_queue<Node *, vector<Node *>, decltype(compare)>
-      pq(compare);
-  int numChars = 0;
-  for (int i = 0; i < 256; i++)
+  const auto numChars = static_cast<std::size_t>(
+      std::count_if(freqs.begin(), freqs.end(),
+                    [](uint64_t frequency)
+                    { return frequency > 0; }));
+
+  UniquePtrPriorityQueue<Node, decltype(compare)> pq(numChars, compare);
+
+  for (std::size_t i = 0; i < freqs.size(); ++i)
   {
     if (freqs[i] > 0)
     {
-      pq.push(new Node(static_cast<char>(i), freqs[i]));
-      numChars++;
+      pq.push(std::make_unique<Node>(static_cast<char>(i), freqs[i]));
     }
   }
-  if (!numChars) {
-    this->root = nullptr;
+
+  if (pq.empty())
+  {
     return;
   }
-  if (numChars == 1) {
-    this->root = pq.top();
+
+  while (pq.size() > 1)
+  {
+    auto left = pq.extract_top();
+    auto right = pq.extract_top();
+    const uint64_t sum = left->freq + right->freq;
+    pq.push(std::make_unique<Node>(
+        '\0', sum, std::move(left), std::move(right)));
+  }
+
+  root = pq.extract_top();
+}
+
+void HuffmanTree::getEncodingsHelper(
+    const Node &node, uint64_t code, uint64_t size,
+    std::array<Encoding, 256> &encodings)
+{
+  if (node.isLeaf())
+  {
+    encodings[static_cast<unsigned char>(node.ch)] = Encoding(code, size);
     return;
   }
-  while (pq.size() != 1)
+
+  if (node.left)
   {
-    Node *left = pq.top();
-    pq.pop();
-    Node *right = pq.top();
-    pq.pop();
-    uint64_t sum = left->freq + right->freq;
-    pq.push(new Node{'\0', sum, left, right});
+    getEncodingsHelper(*node.left, code << 1, size + 1, encodings);
   }
-  this->root = pq.top();
+  if (node.right)
+  {
+    getEncodingsHelper(*node.right, (code << 1) | 1ULL, size + 1, encodings);
+  }
 }
 
-// HuffmanTree::HuffmanTree(BitReader& reader)
-//   : root{nullptr}
-// {
-  
-// }
-
-void HuffmanTree::getEncodingsHelper(const Node *node, uint64_t code, uint64_t size,
-    array<Encoding, 256> &encodings)
+void HuffmanTree::serializeHelper(BitWriter &bitWriter, const Node &current)
 {
-  if (node == nullptr)
+  if (current.isLeaf())
+  {
+    bitWriter.writeBit(1);
+    bitWriter.writeByte(static_cast<std::uint8_t>(static_cast<unsigned char>(current.ch)));
     return;
-
-  if (!node->left && !node->right)
-  {
-    encodings[static_cast<unsigned char>(node->ch)] = Encoding(code, size);
   }
 
-  getEncodingsHelper(node->left, static_cast<uint64_t>((code << 1) | 0ULL), size + 1, encodings);
-  getEncodingsHelper(node->right, static_cast<uint64_t>((code << 1) | 1ULL), size + 1, encodings);
-}
-
-void HuffmanTree::deleteHelper(Node *node)
-{
-  if (node != nullptr)
+  bitWriter.writeBit(0);
+  if (current.left)
   {
-    deleteHelper(node->left);
-    deleteHelper(node->right);
-    delete node;
+    serializeHelper(bitWriter, *current.left);
+  }
+  if (current.right)
+  {
+    serializeHelper(bitWriter, *current.right);
   }
 }
 
-void HuffmanTree::serializeHelper(BitWriter &bitWriter, Node *current)
+std::array<HuffmanTree::Encoding, 256> HuffmanTree::getEncodings()
 {
-  if (current != nullptr)
-  {
-    if (current->isLeaf())
-    {
-      bitWriter.writeBit(1);
-      bitWriter.writeByte(static_cast<std::uint8_t>(static_cast<unsigned char>(current->ch)));
-    }
-    else
-    {
-      bitWriter.writeBit(0);
-    }
-    serializeHelper(bitWriter, current->left);
-    serializeHelper(bitWriter, current->right);
-  }
-}
-
-array<HuffmanTree::Encoding, 256> HuffmanTree::getEncodings()
-{
-  array<Encoding, 256> encodingTable = {};
-  if (this->root == nullptr)
+  std::array<Encoding, 256> encodingTable{};
+  if (!root)
   {
     return encodingTable;
   }
-  if (this->root->left == nullptr && this->root->right == nullptr)
+  if (root->isLeaf())
   {
-    encodingTable[static_cast<unsigned char>(this->root->ch)] = HuffmanTree::Encoding(0, 1);
+    encodingTable[static_cast<unsigned char>(root->ch)] = Encoding(0, 1);
   }
   else
   {
-    getEncodingsHelper(this->root, 0, 0, encodingTable);
+    getEncodingsHelper(*root, 0, 0, encodingTable);
   }
   return encodingTable;
 }
 
 void HuffmanTree::serialize(BitWriter &bitWriter)
 {
-  serializeHelper(bitWriter, this->root);
+  if (root)
+  {
+    serializeHelper(bitWriter, *root);
+  }
 }
 
-HuffmanTree::~HuffmanTree()
-{
-  deleteHelper(this->root);
-}
+HuffmanTree::~HuffmanTree() = default;

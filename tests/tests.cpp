@@ -1,3 +1,6 @@
+#include <algorithm>
+#include <memory>
+#include <type_traits>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -16,6 +19,7 @@
 #include "huffman/Compression.hpp"
 #include "huffman/FrequencyTable.hpp"
 #include "huffman/HuffmanTree.hpp"
+#include "huffman/UniquePtrPriorityQueue.hpp"
 
 namespace
 {
@@ -117,6 +121,308 @@ namespace
         std::size_t passed_{0};
         std::size_t total_{0};
     };
+
+    // -----------------------------------------------------------------------------
+    // Unique-pointer priority-queue tests
+    // -----------------------------------------------------------------------------
+
+    struct QueueTestNode
+    {
+        int frequency;
+        std::unique_ptr<QueueTestNode> left;
+        std::unique_ptr<QueueTestNode> right;
+        int *liveCount;
+
+        explicit QueueTestNode(int value, int *count = nullptr)
+            : frequency{value}, liveCount{count}
+        {
+            if (liveCount)
+            {
+                ++*liveCount;
+            }
+        }
+
+        ~QueueTestNode()
+        {
+            if (liveCount)
+            {
+                --*liveCount;
+            }
+        }
+    };
+
+    struct QueueTestCompare
+    {
+        bool minimumFirst{true};
+
+        bool operator()(const QueueTestNode &a, const QueueTestNode &b) const noexcept
+        {
+            return minimumFirst ? a.frequency > b.frequency
+                                : a.frequency < b.frequency;
+        }
+    };
+
+    using TestNodeQueue = UniquePtrPriorityQueue<QueueTestNode, QueueTestCompare>;
+
+    static_assert(!std::is_copy_constructible_v<TestNodeQueue>);
+    static_assert(!std::is_copy_assignable_v<TestNodeQueue>);
+    static_assert(std::is_move_constructible_v<TestNodeQueue>);
+    static_assert(std::is_move_assignable_v<TestNodeQueue>);
+
+    template <typename Exception, typename Function>
+    void expectQueueException(Function &&function, const std::string &message)
+    {
+        bool caught{false};
+        try
+        {
+            function();
+        }
+        catch (const Exception &)
+        {
+            caught = true;
+        }
+        expect(caught, message);
+    }
+
+    TestSuite runUniquePtrPriorityQueueTests()
+    {
+        TestSuite suite{"Unique Pointer Priority Queue"};
+        std::cout << "\n=== Unique Pointer Priority Queue ===\n";
+
+        suite.run("new queue reports its size and capacity", []
+                  {
+            TestNodeQueue queue{3};
+            expect(queue.empty(), "New queue should be empty");
+            expect(!queue.full(), "New positive-capacity queue should not be full");
+            expectEqual(queue.size(), std::size_t{0}, "Initial size is incorrect");
+            expectEqual(queue.capacity(), std::size_t{3}, "Capacity is incorrect"); });
+
+        suite.run("push and extraction transfer the same node", []
+                  {
+            TestNodeQueue queue{1};
+            auto node = std::make_unique<QueueTestNode>(7);
+            const auto *address = node.get();
+            queue.push(std::move(node));
+            expect(!node, "Successful push should transfer ownership");
+            expectEqual(queue.size(), std::size_t{1}, "Push should increase size");
+            expect(queue.full(), "One-slot queue should be full");
+            auto result = queue.extract_top();
+            expectEqual(result.get(), address, "Extraction must preserve object identity");
+            expect(queue.empty(), "Extraction should empty the queue");
+            expectEqual(queue.size(), std::size_t{0}, "Extraction should decrease size");
+            expect(!queue.full(), "Extracted queue should no longer be full"); });
+
+        suite.run("mixed frequencies are extracted in ascending order", []
+                  {
+            TestNodeQueue queue{6};
+            for (int frequency : {45, 13, 12, 16, 9, 5})
+            {
+                queue.push(std::make_unique<QueueTestNode>(frequency));
+            }
+            for (int expected : {5, 9, 12, 13, 16, 45})
+            {
+                const auto node = queue.extract_top();
+                expectEqual(node->frequency, expected, "Minimum-frequency ordering is incorrect");
+            }
+            expect(queue.empty(), "All nodes should have been extracted"); });
+
+        suite.run("equal priorities preserve every distinct node", []
+                  {
+            TestNodeQueue queue{3};
+            std::vector<const QueueTestNode *> addresses;
+            for (int i{0}; i < 3; ++i)
+            {
+                auto node = std::make_unique<QueueTestNode>(5);
+                addresses.push_back(node.get());
+                queue.push(std::move(node));
+            }
+            // Keep extracted nodes alive; no ordering between ties is required.
+            std::vector<std::unique_ptr<QueueTestNode>> extracted;
+            while (!queue.empty())
+            {
+                auto node = queue.extract_top();
+                const auto found = std::find(addresses.begin(), addresses.end(), node.get());
+                expect(found != addresses.end(), "Duplicate or unexpected node extracted");
+                addresses.erase(found);
+                extracted.push_back(std::move(node));
+            }
+            expect(addresses.empty(), "A tied node was lost"); });
+
+        suite.run("interleaved pushes and extractions maintain ordering", []
+                  {
+            TestNodeQueue queue{3};
+            queue.push(std::make_unique<QueueTestNode>(8));
+            queue.push(std::make_unique<QueueTestNode>(3));
+            expectEqual(queue.extract_top()->frequency, 3, "Expected initial minimum");
+            queue.push(std::make_unique<QueueTestNode>(1));
+            queue.push(std::make_unique<QueueTestNode>(5));
+            for (int expected : {1, 5, 8})
+            {
+                expectEqual(queue.extract_top()->frequency, expected, "Interleaved ordering is incorrect");
+            } });
+
+        suite.run("full queue rejects insertion without consuming ownership", []
+                  {
+            TestNodeQueue queue{1};
+            queue.push(std::make_unique<QueueTestNode>(4));
+            auto rejected = std::make_unique<QueueTestNode>(2);
+            const auto *address = rejected.get();
+            expectQueueException<std::length_error>(
+                [&] { queue.push(std::move(rejected)); }, "Expected capacity exception");
+            expectEqual(rejected.get(), address, "Rejected node should remain with caller");
+            expectEqual(queue.size(), std::size_t{1}, "Rejected insertion changed size");
+            expectEqual(queue.extract_top()->frequency, 4, "Rejected insertion changed queue contents"); });
+
+        suite.run("null insertion is rejected without changing the queue", []
+                  {
+            TestNodeQueue queue{2};
+            queue.push(std::make_unique<QueueTestNode>(6));
+            std::unique_ptr<QueueTestNode> node;
+            expectQueueException<std::invalid_argument>(
+                [&] { queue.push(std::move(node)); }, "Expected null-pointer exception");
+            expectEqual(queue.size(), std::size_t{1}, "Null insertion changed size");
+            expectEqual(queue.extract_top()->frequency, 6, "Null insertion changed contents"); });
+
+        suite.run("empty extraction throws and the queue remains reusable", []
+                  {
+            TestNodeQueue queue{1};
+            expectQueueException<std::length_error>(
+                [&] { auto node = queue.extract_top(); }, "Expected empty-queue exception");
+            expect(queue.empty(), "Failed extraction changed empty state");
+            queue.push(std::make_unique<QueueTestNode>(9));
+            expectEqual(queue.extract_top()->frequency, 9, "Queue should work after failed extraction"); });
+
+        suite.run("zero capacity rejects insertion and extraction", []
+                  {
+            TestNodeQueue queue{0};
+            expect(queue.empty() && queue.full(), "Zero-capacity queue should be empty and full");
+            expectEqual(queue.capacity(), std::size_t{0}, "Expected zero capacity");
+            auto node = std::make_unique<QueueTestNode>(1);
+            expectQueueException<std::length_error>(
+                [&] { queue.push(std::move(node)); }, "Zero capacity should reject insertion");
+            expect(static_cast<bool>(node), "Rejected insertion consumed ownership");
+            expectQueueException<std::length_error>(
+                [&] { auto result = queue.extract_top(); }, "Empty extraction should throw"); });
+
+        suite.run("capacity is reusable after draining", []
+                  {
+            TestNodeQueue queue{2};
+            for (int round{0}; round < 4; ++round)
+            {
+                queue.push(std::make_unique<QueueTestNode>(2));
+                queue.push(std::make_unique<QueueTestNode>(1));
+                expect(queue.full(), "Refilled queue should be full");
+                expectEqual(queue.extract_top()->frequency, 1, "Refill minimum is incorrect");
+                expectEqual(queue.extract_top()->frequency, 2, "Refill maximum is incorrect");
+                expect(queue.empty(), "Drained queue should be empty");
+                expectEqual(queue.capacity(), std::size_t{2}, "Draining changed capacity");
+            } });
+
+        suite.run("stateful comparator can select maximum first", []
+                  {
+            TestNodeQueue queue{3, QueueTestCompare{false}};
+            for (int frequency : {2, 7, 1})
+            {
+                queue.push(std::make_unique<QueueTestNode>(frequency));
+            }
+            for (int expected : {7, 2, 1})
+            {
+                expectEqual(queue.extract_top()->frequency, expected, "Custom comparator was ignored");
+            } });
+
+        suite.run("default comparator works with integer pointees", []
+                  {
+            UniquePtrPriorityQueue<int> queue{3};
+            for (int value : {2, 7, 1})
+            {
+                queue.push(std::make_unique<int>(value));
+            }
+            for (int expected : {7, 2, 1})
+            {
+                expectEqual(*queue.extract_top(), expected, "Default comparator should give maximum first");
+            } });
+
+        suite.run("move construction transfers nodes and comparator state", []
+                  {
+            TestNodeQueue source{3, QueueTestCompare{false}};
+            source.push(std::make_unique<QueueTestNode>(2));
+            source.push(std::make_unique<QueueTestNode>(8));
+            TestNodeQueue destination{std::move(source)};
+            expectEqual(destination.size(), std::size_t{2}, "Move lost nodes");
+            expectEqual(destination.capacity(), std::size_t{3}, "Move lost capacity");
+            destination.push(std::make_unique<QueueTestNode>(5));
+            for (int expected : {8, 5, 2})
+            {
+                expectEqual(destination.extract_top()->frequency, expected, "Move lost comparator or ordering");
+            } });
+
+        suite.run("move assignment releases old nodes and transfers ownership", []
+                  {
+            int liveCount{0};
+            {
+                TestNodeQueue source{2, QueueTestCompare{false}};
+                source.push(std::make_unique<QueueTestNode>(3, &liveCount));
+                source.push(std::make_unique<QueueTestNode>(9, &liveCount));
+                TestNodeQueue destination{1};
+                destination.push(std::make_unique<QueueTestNode>(99, &liveCount));
+                destination = std::move(source);
+                expectEqual(liveCount, 2, "Move assignment should destroy the old destination node");
+                expectEqual(destination.capacity(), std::size_t{2}, "Move assignment lost capacity");
+                expectEqual(destination.size(), std::size_t{2}, "Move assignment lost nodes");
+                expectEqual(destination.extract_top()->frequency, 9, "Move assignment lost comparator state");
+                expectEqual(destination.extract_top()->frequency, 3, "Move assignment lost remaining node");
+            }
+            expectEqual(liveCount, 0, "Move assignment leaked nodes"); });
+
+        suite.run("extracted nodes outlive the queue and queued nodes are destroyed", []
+                  {
+            int liveCount{0};
+            std::unique_ptr<QueueTestNode> extracted;
+            {
+                TestNodeQueue queue{2};
+                queue.push(std::make_unique<QueueTestNode>(1, &liveCount));
+                queue.push(std::make_unique<QueueTestNode>(2, &liveCount));
+                extracted = queue.extract_top();
+                expectEqual(liveCount, 2, "Extraction should not destroy either node");
+            }
+            expectEqual(liveCount, 1, "Queue destruction should release only its remaining node");
+            expectEqual(extracted->frequency, 1, "Extracted node should remain valid");
+            extracted.reset();
+            expectEqual(liveCount, 0, "Extracted node should be destroyed by its new owner"); });
+
+        suite.run("Huffman merges preserve subtrees and produce expected cost", []
+                  {
+            int liveCount{0};
+            {
+                TestNodeQueue queue{6};
+                for (int frequency : {45, 13, 12, 16, 9, 5})
+                {
+                    queue.push(std::make_unique<QueueTestNode>(frequency, &liveCount));
+                }
+                int mergeCost{0};
+                while (queue.size() > 1)
+                {
+                    auto left = queue.extract_top();
+                    auto right = queue.extract_top();
+                    auto parent = std::make_unique<QueueTestNode>(
+                        left->frequency + right->frequency, &liveCount);
+                    mergeCost += parent->frequency;
+                    parent->left = std::move(left);
+                    parent->right = std::move(right);
+                    queue.push(std::move(parent));
+                }
+                auto root = queue.extract_top();
+                expectEqual(root->frequency, 100, "Root should contain total frequency");
+                expectEqual(mergeCost, 224, "Expected optimal Huffman merge cost");
+                expectEqual(liveCount, 11, "All six leaves and five parents must remain alive");
+                expect(root->left && root->right, "Root should own both subtrees");
+                expect(queue.empty(), "Final extraction should empty the queue");
+            }
+            expectEqual(liveCount, 0, "Huffman subtree ownership leaked nodes"); });
+
+        suite.printSummary();
+        return suite;
+    }
 
     // -----------------------------------------------------------------------------
     // File helpers
@@ -1207,17 +1513,16 @@ namespace
 
         // Fixed byte fixtures check the reader independently of BitWriter.
         suite.run("readBit rejects empty input", []
-        {
+                  {
             auto input{makeBitReaderInput({})};
             BitReader reader{input};
 
             expectReadError(
                 [&reader] { (void)reader.readBit(); },
-                "Reading an empty input should throw instead of producing a bit");
-        });
+                "Reading an empty input should throw instead of producing a bit"); });
 
         suite.run("zero-length reads return zero without consuming bits", []
-        {
+                  {
             auto emptyInput{makeBitReaderInput({})};
             BitReader emptyReader{emptyInput};
             expectEqual(emptyReader.readBits(0), uint64_t{0},
@@ -1234,11 +1539,10 @@ namespace
             expectEqual(reader.readBits(5), uint64_t{0b00101},
                         "A zero-length read changed the current bit position");
             expectEqual(reader.readBits(0), uint64_t{0},
-                        "A zero-length read at the end should return zero");
-        });
+                        "A zero-length read at the end should return zero"); });
 
         suite.run("readBit reads most-significant bit first", []
-        {
+                  {
             auto input{makeBitReaderInput({0xA5})};
             BitReader reader{input};
             const std::array<uint8_t, 8> expected{1, 0, 1, 0, 0, 1, 0, 1};
@@ -1247,11 +1551,10 @@ namespace
             {
                 expectEqual(reader.readBit(), bit,
                             "Expected 0xA5 to be read as 10100101");
-            }
-        });
+            } });
 
         suite.run("readByte preserves all 256 byte values across refills", []
-        {
+                  {
             std::vector<uint8_t> bytes;
             for (unsigned value{0}; value < 256; ++value)
             {
@@ -1269,11 +1572,10 @@ namespace
 
             expectReadError(
                 [&reader] { (void)reader.readByte(); },
-                "Reading beyond the last complete buffer should throw");
-        });
+                "Reading beyond the last complete buffer should throw"); });
 
         suite.run("readBits preserves leading zeroes and their positions", []
-        {
+                  {
             auto input{makeBitReaderInput({0x20, 0xE0})};
             BitReader reader{input};
 
@@ -1284,11 +1586,10 @@ namespace
             expectEqual(reader.readBits(3), uint64_t{0b111},
                         "The next byte should begin at the correct position");
             expectEqual(reader.readBits(5), uint64_t{0},
-                        "Expected the remaining five zero bits");
-        });
+                        "Expected the remaining five zero bits"); });
 
         suite.run("readBits calls remain contiguous across byte boundaries", []
-        {
+                  {
             auto input{makeBitReaderInput({0xB9, 0x80})};
             BitReader reader{input};
 
@@ -1301,11 +1602,10 @@ namespace
                         "Expected seven right-padding zero bits");
             expectReadError(
                 [&reader] { (void)reader.readBit(); },
-                "Only padding actually stored in the input may be read");
-        });
+                "Only padding actually stored in the input may be read"); });
 
         suite.run("readBits supports every width from 1 through 64", []
-        {
+                  {
             constexpr uint64_t word{UINT64_C(0xFEDCBA9876543210)};
 
             for (uint64_t width{1}; width <= 64; ++width)
@@ -1323,11 +1623,10 @@ namespace
                 expectEqual(reader.readBits(remaining), word & mask,
                             "A read consumed the wrong number of bits at width " +
                                 std::to_string(width));
-            }
-        });
+            } });
 
         suite.run("readBits supports zero and all-one 64-bit words", []
-        {
+                  {
             for (uint8_t byte : std::array<uint8_t, 2>{0x00, 0xFF})
             {
                 auto input{makeBitReaderInput(std::vector<uint8_t>(8, byte))};
@@ -1337,11 +1636,10 @@ namespace
 
                 expectEqual(reader.readBits(64), expected,
                             "A full-width read lost or introduced bits");
-            }
-        });
+            } });
 
         suite.run("mixed bit byte and bulk reads share one cursor", []
-        {
+                  {
             auto input{makeBitReaderInput({0xB4, 0xA6})};
             BitReader reader{input};
 
@@ -1352,11 +1650,10 @@ namespace
             expectEqual(reader.readBit(), uint8_t{0},
                         "readBit should continue immediately after readByte");
             expectEqual(reader.readBits(4), uint64_t{0b0110},
-                        "Mixed reads lost the four-bit suffix");
-        });
+                        "Mixed reads lost the four-bit suffix"); });
 
         suite.run("readByte decodes an unaligned leaf character", []
-        {
+                  {
             auto input{makeBitReaderInput({0xB0, 0x80})};
             BitReader reader{input};
 
@@ -1365,11 +1662,10 @@ namespace
             expectEqual(reader.readByte(), uint8_t{'a'},
                         "Expected the unaligned character in 1|01100001");
             expectEqual(reader.readBits(7), uint64_t{0},
-                        "Expected seven padding bits after the leaf character");
-        });
+                        "Expected seven padding bits after the leaf character"); });
 
         suite.run("readBit advances correctly across the 64-bit boundary", []
-        {
+                  {
             auto input{makeBitReaderInput(
                 {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x80})};
             BitReader reader{input};
@@ -1381,11 +1677,10 @@ namespace
             expectEqual(reader.readBit(), uint8_t{1},
                         "The first bit of the new buffer was skipped");
             expectEqual(reader.readBits(7), uint64_t{0},
-                        "Expected the remainder of the final byte");
-        });
+                        "Expected the remainder of the final byte"); });
 
         suite.run("readBits combines data from both sides of a refill", []
-        {
+                  {
             auto input{makeBitReaderInput(
                 {0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xB4})};
             BitReader reader{input};
@@ -1395,11 +1690,10 @@ namespace
             expectEqual(reader.readBits(8), uint64_t{0xFB},
                         "Expected four old bits and four new bits to form 0xFB");
             expectEqual(reader.readBits(4), uint64_t{0x4},
-                        "Crossing a refill consumed too many bits");
-        });
+                        "Crossing a refill consumed too many bits"); });
 
         suite.run("readByte can span the 64-bit refill boundary", []
-        {
+                  {
             auto input{makeBitReaderInput(
                 {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x96})};
             BitReader reader{input};
@@ -1409,11 +1703,10 @@ namespace
             expectEqual(reader.readByte(), uint8_t{0xCB},
                         "Expected byte 1|1001011 to cross the refill boundary");
             expectEqual(reader.readBit(), uint8_t{0},
-                        "Expected the last bit of 0x96 to remain unread");
-        });
+                        "Expected the last bit of 0x96 to remain unread"); });
 
         suite.run("a full 64-bit read can begin at an unaligned position", []
-        {
+                  {
             // Bits: 1 | 0x0123456789ABCDEF | seven zero padding bits.
             auto input{makeBitReaderInput(
                 {0x80, 0x91, 0xA2, 0xB3, 0xC4, 0xD5, 0xE6, 0xF7, 0x80})};
@@ -1424,11 +1717,10 @@ namespace
             expectEqual(reader.readBits(64), UINT64_C(0x0123456789ABCDEF),
                         "An unaligned full-width read corrupted the word");
             expectEqual(reader.readBits(7), uint64_t{0},
-                        "Expected padding after the full-width read");
-        });
+                        "Expected padding after the full-width read"); });
 
         suite.run("partial refills expose only the bytes actually loaded", []
-        {
+                  {
             // Cover every short refill length, initially and after a full buffer.
             for (std::size_t prefix : std::array<std::size_t, 2>{0, 8})
             {
@@ -1460,11 +1752,10 @@ namespace
                         [&reader] { (void)reader.readBit(); },
                         "A partial refill exposed bits beyond the actual input");
                 }
-            }
-        });
+            } });
 
         suite.run("EOF after exactly eight bytes throws on further reads", []
-        {
+                  {
             auto input{makeBitReaderInput(
                 {0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF})};
             BitReader reader{input};
@@ -1478,11 +1769,10 @@ namespace
             expectReadError([&reader] { (void)reader.readBits(64); },
                             "readBits should continue to throw after EOF");
             expectEqual(reader.readBits(0), uint64_t{0},
-                        "A zero-length read should still succeed after EOF");
-        });
+                        "A zero-length read should still succeed after EOF"); });
 
         suite.run("a final zero byte is data rather than EOF", []
-        {
+                  {
             auto input{makeBitReaderInput({0xA5, 0x00})};
             BitReader reader{input};
 
@@ -1491,21 +1781,19 @@ namespace
             expectEqual(reader.readByte(), uint8_t{0x00},
                         "The final zero byte was mistaken for EOF");
             expectReadError([&reader] { (void)reader.readBit(); },
-                            "The input should end after the actual zero byte");
-        });
+                            "The input should end after the actual zero byte"); });
 
         suite.run("readBits throws if fewer bits remain than requested", []
-        {
+                  {
             auto input{makeBitReaderInput({0xAB})};
             BitReader reader{input};
 
             expectReadError(
                 [&reader] { (void)reader.readBits(9); },
-                "An eight-bit input cannot satisfy a nine-bit request");
-        });
+                "An eight-bit input cannot satisfy a nine-bit request"); });
 
         suite.run("readByte throws when only part of a byte remains", []
-        {
+                  {
             auto input{makeBitReaderInput({0xA0})};
             BitReader reader{input};
 
@@ -1513,11 +1801,10 @@ namespace
                         "Expected the three-bit prefix");
             expectReadError(
                 [&reader] { (void)reader.readByte(); },
-                "Five remaining bits cannot satisfy a readByte request");
-        });
+                "Five remaining bits cannot satisfy a readByte request"); });
 
         suite.run("stream failures are reported instead of producing data", []
-        {
+                  {
             for (auto state : {std::ios::badbit, std::ios::failbit})
             {
                 auto input{makeBitReaderInput({0xA5})};
@@ -1527,11 +1814,10 @@ namespace
                 expectReadError(
                     [&reader] { (void)reader.readBit(); },
                     "A failed input stream should cause a read error");
-            }
-        });
+            } });
 
         suite.run("binary file input handles a full and a partial refill", []
-        {
+                  {
             const std::vector<uint8_t> bytes{
                 0x00, 0x80, 0xFF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF};
             const fs::path filename{TEST_OUTPUT_DIRECTORY / "bitreader_binary_input.bin"};
@@ -1546,11 +1832,10 @@ namespace
             expectEqual(reader.readBits(24), UINT64_C(0xABCDEF),
                         "The final three-byte refill was corrupted");
             expectReadError([&reader] { (void)reader.readBit(); },
-                            "Reading beyond the binary file should throw");
-        });
+                            "Reading beyond the binary file should throw"); });
 
         suite.run("reading starts at the stream's current position", []
-        {
+                  {
             auto input{makeBitReaderInput({'H', 'U', 'F', 'F', 0xB9, 0x80})};
             input.ignore(4);
             BitReader reader{input};
@@ -1558,8 +1843,7 @@ namespace
             expectEqual(reader.readBits(3), uint64_t{0b101},
                         "The reader should start after the already-consumed header");
             expectEqual(reader.readBits(6), uint64_t{0b110011},
-                        "Reading after a header changed the payload bit order");
-        });
+                        "Reading after a header changed the payload bit order"); });
 
         suite.printSummary();
         return suite;
@@ -1672,6 +1956,9 @@ int main()
         << " Huffman Compression Lab - Naive Test Suite\n"
         << "============================================\n";
 
+    const TestSuite queueSuite{
+        runUniquePtrPriorityQueueTests()};
+
     const TestSuite frequencySuite{
         runFrequencyTests()};
 
@@ -1691,6 +1978,7 @@ int main()
         runCompressorTests()};
 
     const std::size_t totalPassed{
+        queueSuite.passed() +
         frequencySuite.passed() +
         huffmanSuite.passed() +
         serializationSuite.passed() +
@@ -1699,6 +1987,7 @@ int main()
         compressorSuite.passed()};
 
     const std::size_t totalTests{
+        queueSuite.total() +
         frequencySuite.total() +
         huffmanSuite.total() +
         serializationSuite.total() +
