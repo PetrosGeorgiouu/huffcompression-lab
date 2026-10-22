@@ -67,6 +67,14 @@ make compress \
 
 Replace these paths with your input and output locations.
 
+You can decompress a .huff file with the corresponding command.
+
+```bash
+make decompress \
+  INPUT="path/to/input.huff" \
+  OUTPUT="path/to/output.txt"
+```
+
 Run the test cases:
 
 ```bash

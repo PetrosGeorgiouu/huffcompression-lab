@@ -15,13 +15,15 @@ SOURCES := src/FrequencyTable.cpp \
            src/HuffmanTree.cpp \
            src/Compression.cpp \
            src/BitWriter.cpp \
-           src/BitReader.cpp
+           src/BitReader.cpp \
+					 src/Decompression.cpp
 
 HEADERS := include/huffman/FrequencyTable.hpp \
            include/huffman/HuffmanTree.hpp \
            include/huffman/Compression.hpp \
            include/huffman/BitWriter.hpp \
-           include/huffman/BitReader.hpp
+           include/huffman/BitReader.hpp \
+					 include/huffman/Decompression.hpp
 
 TESTS := tests/tests.cpp
 
@@ -45,6 +47,11 @@ build/huff: apps/huff.cpp $(SOURCES) $(HEADERS)
 	mkdir -p build
 	$(CXX) $(CXXFLAGS) apps/huff.cpp $(SOURCES) \
 		-o build/huff
+
+build/dehuff: apps/dehuff.cpp $(SOURCES) $(HEADERS)
+	mkdir -p build
+	$(CXX) $(CXXFLAGS) apps/dehuff.cpp $(SOURCES) \
+		-o build/dehuff		
 
 
 build/huff_profiler: apps/huff_profiler.cpp $(SOURCES) $(HEADERS)
@@ -75,6 +82,12 @@ compress: build/huff
 	fi
 	./build/huff "$(INPUT)" "$(OUTPUT)"
 
+decompress: build/dehuff
+	@if [ -z "$(INPUT)" ] || [ -z "$(OUTPUT)" ]; then \
+		echo "Usage: make decompress INPUT=<input-file> OUTPUT=<output-file>"; \
+		exit 1; \
+	fi
+	./build/dehuff "$(INPUT)" "$(OUTPUT)"
 
 profile: build/huff_profiler
 ifeq ($(shell uname -s),Linux)
@@ -97,4 +110,4 @@ clean:
 	rm -rf build
 
 
-.PHONY: build compress profile corpus tests clean
+.PHONY: build compress decompress profile corpus tests clean

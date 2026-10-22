@@ -17,6 +17,7 @@
 #include "huffman/BitReader.hpp"
 #include "huffman/BitWriter.hpp"
 #include "huffman/Compression.hpp"
+#include "huffman/Decompression.hpp"
 #include "huffman/FrequencyTable.hpp"
 #include "huffman/HuffmanTree.hpp"
 #include "huffman/UniquePtrPriorityQueue.hpp"
@@ -1853,6 +1854,162 @@ namespace
     // Compressor tests
     // -----------------------------------------------------------------------------
 
+    // -----------------------------------------------------------------------------
+    // Huffman deserialization and symbol-decoding tests
+    // -----------------------------------------------------------------------------
+
+    void expectDecodeRoundTrip(const std::string &message)
+    {
+        expect(!message.empty(), "Empty input has no serialized tree");
+        std::array<uint64_t, 256> frequencies{};
+        for (unsigned char ch : message)
+        {
+            ++frequencies[ch];
+        }
+
+        std::ostringstream output{std::ios::out | std::ios::binary};
+        // Destroy the encoding tree before decoding: only serialized bytes survive.
+        {
+            HuffmanTree encoder{frequencies};
+            const auto encodings = encoder.getEncodings();
+            BitWriter writer{output};
+            encoder.serialize(writer);
+            for (unsigned char ch : message)
+            {
+                const auto &code = encodings[ch];
+                writer.writeBits(code.encoding, code.size);
+            }
+            // An extra field detects under/over-consumption, including single leaves.
+            writer.writeBits(0b10101, 5);
+            writer.flush();
+        }
+
+        std::istringstream input{output.str(), std::ios::in | std::ios::binary};
+        BitReader reader{input};
+        HuffmanTree decoder{reader};
+        std::string decoded;
+        decoded.reserve(message.size());
+        for (std::size_t i = 0; i < message.size(); ++i)
+        {
+            decoded.push_back(decoder.decodeSymbol());
+        }
+        expectEqual(decoded, message, "Decoded bytes differ from original input");
+        expectEqual(reader.readBits(5), uint64_t{0b10101},
+                    "Decoder consumed the wrong number of payload bits");
+    }
+
+    TestSuite runHuffmanDecodingTests()
+    {
+        TestSuite suite{"Huffman Decoding"};
+        std::cout << "\n=== Huffman Decoding ===\n";
+
+        suite.run("fixed preorder fixture decodes left and nested right paths", []
+                  {
+            // Tree: internal(A, internal(B, C)); codes A=0, B=10, C=11.
+            // Tree bits: 0|1 01000001|0|1 01000010|1 01000011 (29 bits).
+            // Payload ABCA: 0|10|11|0; sentinel: 10101; no padding needed.
+            // Fixed bytes deliberately avoid relying on the production serializer.
+            auto input = makeBitReaderInput({0x50, 0x54, 0x2A, 0x1A, 0xD5});
+            BitReader reader{input};
+            const HuffmanTree decoder{reader};
+            for (char expected : std::string{"ABCA"})
+            {
+                expectEqual(decoder.decodeSymbol(), expected,
+                            "Fixed fixture decoded an incorrect symbol");
+            }
+            expectEqual(reader.readBits(5), uint64_t{0b10101},
+                        "Tree/payload parsing lost the exact bit position"); });
+
+        suite.run("one character consumes its one-bit code", []
+                  { expectDecodeRoundTrip("A"); });
+        suite.run("repeated single symbol consumes every code bit", []
+                  { expectDecodeRoundTrip(std::string(1000, 'A')); });
+        suite.run("single null-byte symbol decodes correctly", []
+                  { expectDecodeRoundTrip(std::string(17, '\0')); });
+        suite.run("single high-byte symbol decodes correctly", []
+                  { expectDecodeRoundTrip(std::string(19, static_cast<char>(0xFF))); });
+        suite.run("two-symbol message crosses unaligned tree boundary", []
+                  { expectDecodeRoundTrip("ABABBAABABBA"); });
+        suite.run("varying code lengths reset traversal for each symbol", []
+                  { expectDecodeRoundTrip("BANANA BANDANA\n"); });
+        suite.run("all 256 byte values survive decoding", []
+                  {
+            std::string message;
+            for (int byte = 0; byte < 256; ++byte)
+                message.push_back(static_cast<char>(byte));
+            expectDecodeRoundTrip(message); });
+        suite.run("large deterministic binary message crosses reader refills", []
+                  {
+            std::string message;
+            uint32_t state{0x12345678};
+            for (std::size_t i = 0; i < 200000; ++i)
+            {
+                state = state * UINT32_C(1664525) + UINT32_C(1013904223);
+                message.push_back(static_cast<char>(state >> 24));
+            }
+            expectDecodeRoundTrip(message); });
+        suite.run("skewed frequencies decode long and short paths", []
+                  {
+            std::string message;
+            std::size_t previous{1}, count{1};
+            for (int symbol = 0; symbol < 16; ++symbol)
+            {
+                message.append(count, static_cast<char>(symbol));
+                const auto next = previous + count;
+                previous = count;
+                count = next;
+            }
+            expectDecodeRoundTrip(message); });
+        suite.run("empty serialized input rejects reconstruction", []
+                  {
+            auto input = makeBitReaderInput({});
+            BitReader reader{input};
+            expectReadError([&] { HuffmanTree decoder{reader}; },
+                            "Missing tree should throw"); });
+        suite.run("truncated leaf character rejects reconstruction", []
+                  {
+            // Leaf marker plus only seven of the required eight character bits.
+            auto input = makeBitReaderInput({0xA0});
+            BitReader reader{input};
+            expectReadError([&] { HuffmanTree decoder{reader}; },
+                            "Incomplete leaf should throw"); });
+        suite.run("internal node missing right subtree rejects reconstruction", []
+                  {
+            // 0 | 1 01000001 | 1 01000010 needs 19 bits; only 16 are present.
+            auto input = makeBitReaderInput({0x50, 0x68});
+            BitReader reader{input};
+            expectReadError([&] { HuffmanTree decoder{reader}; },
+                            "Incomplete right subtree should throw"); });
+        suite.run("single-symbol decoder rejects a nonzero payload bit", []
+                  {
+            // 1 | 01000001 | 1, followed by padding.
+            auto input = makeBitReaderInput({0xA0, 0xE0});
+            BitReader reader{input};
+            HuffmanTree decoder{reader};
+            expectReadError([&] { (void)decoder.decodeSymbol(); },
+                            "Single-symbol code must be zero"); });
+        suite.run("decoder throws when payload is exhausted", []
+                  {
+            // Tree internal(A,B) is 19 bits; five remaining bits encode five As.
+            auto input = makeBitReaderInput({0x50, 0x68, 0x40});
+            BitReader reader{input};
+            HuffmanTree decoder{reader};
+            for (int i = 0; i < 5; ++i)
+                expectEqual(decoder.decodeSymbol(), 'A', "Expected A before EOF");
+            expectReadError([&] { (void)decoder.decodeSymbol(); },
+                            "Reading beyond physical payload should throw"); });
+        suite.run("frequency-built tree rejects decoding without an attached reader", []
+                  {
+            std::array<uint64_t, 256> frequencies{};
+            frequencies['A'] = 1;
+            HuffmanTree tree{frequencies};
+            expectReadError([&] { (void)tree.decodeSymbol(); },
+                            "Decoding without a reader should throw"); });
+
+        suite.printSummary();
+        return suite;
+    }
+
     TestSuite runCompressorTests()
     {
         TestSuite suite{"Compressor"};
@@ -1929,6 +2086,152 @@ namespace
         return suite;
     }
 
+    // -----------------------------------------------------------------------------
+    // Full-file decompression tests (version 1 uses native-endian uint64_t size)
+    // -----------------------------------------------------------------------------
+
+    std::string makeDecompressionFixture(uint64_t originalSize,
+                                         const std::vector<uint8_t> &body = {})
+    {
+        std::string bytes{"HUFF"};
+        bytes.push_back('\1');
+        bytes.append(reinterpret_cast<const char *>(&originalSize), sizeof(originalSize));
+        for (uint8_t byte : body)
+            bytes.push_back(static_cast<char>(byte));
+        return bytes;
+    }
+
+    void expectFileRoundTrip(const std::string &name, const std::string &contents)
+    {
+        const auto original = TEST_OUTPUT_DIRECTORY / (name + ".original");
+        const auto compressed = TEST_OUTPUT_DIRECTORY / (name + ".huff");
+        const auto restored = TEST_OUTPUT_DIRECTORY / (name + ".restored");
+        writeTestFile(original, contents);
+        // A stale tail must be removed even for empty decoded output.
+        writeTestFile(restored, std::string(contents.size() + 100, 'X'));
+        compressor(original.string(), compressed.string());
+        decompressor(compressed.string(), restored.string());
+        expectEqual(readFileBytes(restored), readFileBytes(original),
+                    "Full-file round trip changed bytes or left a stale output tail");
+        expectEqual(fs::file_size(restored), static_cast<std::uintmax_t>(contents.size()),
+                    "Decompressed file has an incorrect size");
+    }
+
+    void expectDecompressionFailure(const std::string &name, const std::string &bytes)
+    {
+        const auto input = TEST_OUTPUT_DIRECTORY / (name + ".huff");
+        const auto output = TEST_OUTPUT_DIRECTORY / (name + ".restored");
+        writeTestFile(input, bytes);
+        expectReadError([&]
+                        { decompressor(input.string(), output.string()); },
+                        "Decompression should reject " + name);
+    }
+
+    TestSuite runDecompressorTests()
+    {
+        TestSuite suite{"Decompressor"};
+        std::cout << "\n=== Decompressor ===\n";
+
+        suite.run("empty file round trip creates an empty output", []
+                  { expectFileRoundTrip("decompress_empty", ""); });
+        suite.run("one character round trip ignores final padding", []
+                  { expectFileRoundTrip("decompress_one", "A"); });
+        suite.run("repeated single symbol round trip", []
+                  { expectFileRoundTrip("decompress_repeated", std::string(10000, 'a')); });
+        suite.run("two symbols round trip across unaligned tree boundary", []
+                  { expectFileRoundTrip("decompress_two", "abb"); });
+        suite.run("text preserves spaces tabs and line endings", []
+                  { expectFileRoundTrip("decompress_text", "BANANA BANDANA\n\tline two\r\nlast line\r"); });
+        suite.run("binary control characters and high bytes are preserved", []
+                  {
+            const char bytes[]{'\0', '\r', '\n', '\x1A', '\t',
+                               static_cast<char>(0x80), static_cast<char>(0xFF), '\0'};
+            expectFileRoundTrip("decompress_binary", std::string(bytes, sizeof(bytes))); });
+        suite.run("all 256 byte values round trip", []
+                  {
+            std::string contents;
+            for (int byte = 0; byte < 256; ++byte)
+                contents.push_back(static_cast<char>(byte));
+            expectFileRoundTrip("decompress_all_bytes", contents); });
+        suite.run("round trips span compressor input block boundaries", []
+                  {
+            for (std::size_t size : {4095u, 4096u, 4097u, 65535u, 65536u, 65537u})
+            {
+                std::string contents;
+                for (std::size_t i = 0; i < size; ++i)
+                    contents.push_back(static_cast<char>((i * 37 + i / 256) & 255));
+                expectFileRoundTrip("decompress_boundary_" + std::to_string(size), contents);
+            } });
+        suite.run("large deterministic binary file round trips", []
+                  {
+            std::string contents;
+            uint32_t state{0xABCDEF01};
+            for (std::size_t i = 0; i < 200000; ++i)
+            {
+                state = state * UINT32_C(1664525) + UINT32_C(1013904223);
+                contents.push_back(static_cast<char>(state >> 24));
+            }
+            expectFileRoundTrip("decompress_large", contents); });
+        suite.run("independent fixed file fixture decodes without compressor", []
+                  {
+            // Tree internal(a,b), codes a=0 b=1; payload abb=011, then padding.
+            const auto input = TEST_OUTPUT_DIRECTORY / "decompress_fixed.huff";
+            const auto output = TEST_OUTPUT_DIRECTORY / "decompress_fixed.restored";
+            writeTestFile(input, makeDecompressionFixture(3, {0x58, 0x6C, 0x4C}));
+            decompressor(input.string(), output.string());
+            expectEqual(readFileBytes(output), std::vector<uint8_t>{'a', 'b', 'b'},
+                        "Independent file fixture was decoded incorrectly"); });
+        suite.run("every truncated fixed-header length is rejected", []
+                  {
+            const auto header = makeDecompressionFixture(0);
+            for (std::size_t size = 0; size < header.size(); ++size)
+                expectDecompressionFailure("decompress_short_header_" + std::to_string(size),
+                                           header.substr(0, size)); });
+        suite.run("each incorrect magic byte is rejected", []
+                  {
+            for (std::size_t i = 0; i < 4; ++i)
+            {
+                auto bytes = makeDecompressionFixture(0);
+                bytes[i] = '?';
+                expectDecompressionFailure("decompress_bad_magic_" + std::to_string(i), bytes);
+            } });
+        suite.run("unsupported file versions are rejected", []
+                  {
+            for (unsigned version : {0u, 2u, 255u})
+            {
+                auto bytes = makeDecompressionFixture(0);
+                bytes[4] = static_cast<char>(version);
+                expectDecompressionFailure("decompress_version_" + std::to_string(version), bytes);
+            } });
+        suite.run("nonempty original size requires a serialized tree", []
+                  { expectDecompressionFailure("decompress_missing_tree", makeDecompressionFixture(1)); });
+        suite.run("truncated serialized leaf is rejected", []
+                  { expectDecompressionFailure("decompress_short_tree", makeDecompressionFixture(1, {0xA0})); });
+        suite.run("physically truncated payload is rejected", []
+                  {
+            // Header requires 32 symbols; leaf A plus seven zero bits is insufficient.
+            expectDecompressionFailure("decompress_short_payload",
+                                       makeDecompressionFixture(32, {0xA0, 0x80})); });
+        suite.run("invalid single-symbol payload bit is rejected", []
+                  { expectDecompressionFailure("decompress_bad_bit", makeDecompressionFixture(1, {0xA0, 0xE0})); });
+        suite.run("missing input file raises a runtime error", []
+                  {
+            const auto missing = TEST_OUTPUT_DIRECTORY / "decompress_missing_input.huff";
+            const auto output = TEST_OUTPUT_DIRECTORY / "decompress_missing_input.restored";
+            fs::remove(missing);
+            expectReadError([&] { decompressor(missing.string(), output.string()); },
+                            "Missing input should throw"); });
+        suite.run("directory as output path raises a runtime error", []
+                  {
+            const auto input = TEST_OUTPUT_DIRECTORY / "decompress_output_error.huff";
+            writeTestFile(input, makeDecompressionFixture(0));
+            expectReadError([&] { decompressor(input.string(), TEST_OUTPUT_DIRECTORY.string()); },
+                            "Opening a directory for output should throw"); });
+
+        suite.printSummary();
+        return suite;
+    }
+
 } // namespace
 
 // -----------------------------------------------------------------------------
@@ -1974,8 +2277,14 @@ int main()
     const TestSuite bitReaderSuite{
         runBitReaderTests()};
 
+    const TestSuite decodingSuite{
+        runHuffmanDecodingTests()};
+
     const TestSuite compressorSuite{
         runCompressorTests()};
+
+    const TestSuite decompressorSuite{
+        runDecompressorTests()};
 
     const std::size_t totalPassed{
         queueSuite.passed() +
@@ -1984,7 +2293,9 @@ int main()
         serializationSuite.passed() +
         bitWriterSuite.passed() +
         bitReaderSuite.passed() +
-        compressorSuite.passed()};
+        decodingSuite.passed() +
+        compressorSuite.passed() +
+        decompressorSuite.passed()};
 
     const std::size_t totalTests{
         queueSuite.total() +
@@ -1993,7 +2304,9 @@ int main()
         serializationSuite.total() +
         bitWriterSuite.total() +
         bitReaderSuite.total() +
-        compressorSuite.total()};
+        decodingSuite.total() +
+        compressorSuite.total() +
+        decompressorSuite.total()};
 
     std::cout
         << "\n============================================\n"

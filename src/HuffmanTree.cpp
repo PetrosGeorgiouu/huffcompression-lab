@@ -5,6 +5,7 @@
 #include "huffman/BitWriter.hpp"
 #include "huffman/HuffmanTree.hpp"
 #include "huffman/UniquePtrPriorityQueue.hpp"
+#include "huffman/BitReader.hpp"
 
 struct HuffmanTree::Node
 {
@@ -63,6 +64,26 @@ HuffmanTree::HuffmanTree(std::array<uint64_t, 256> &freqs)
   }
 
   root = pq.extract_top();
+}
+
+HuffmanTree::HuffmanTree(BitReader &input)
+    : reader(&input)
+{
+  root = deserializeHelper();
+}
+
+std::unique_ptr<HuffmanTree::Node>
+HuffmanTree::deserializeHelper()
+{
+  const uint8_t marker = reader->readBit();
+  if (marker == 1)
+  {
+    const char ch = static_cast<char>(reader->readByte());
+    return std::make_unique<Node>(ch, 0);
+  }
+  auto left = deserializeHelper();
+  auto right = deserializeHelper();
+  return std::make_unique<Node>('\0', 0, std::move(left), std::move(right));
 }
 
 void HuffmanTree::getEncodingsHelper(
@@ -129,6 +150,39 @@ void HuffmanTree::serialize(BitWriter &bitWriter)
   {
     serializeHelper(bitWriter, *root);
   }
+}
+
+char HuffmanTree::decodeSymbol() const
+{
+  if (!reader)
+  {
+    throw std::runtime_error("No reader attached to Huffman tree");
+  }
+
+  if (!root)
+  {
+    throw std::runtime_error("Can't decode an empty tree");
+  }
+  const Node *current = root.get();
+  if (current->isLeaf())
+  {
+    if (reader->readBit() != 0)
+    {
+      throw runtime_error("Invalid bit for single symbol tree.");
+    }
+    return current->ch;
+  }
+  while (!current->isLeaf())
+  {
+    const uint8_t bit = reader->readBit();
+    current = bit == 0 ? current->left.get() : current->right.get();
+
+    if (!current)
+    {
+      throw runtime_error("Invalid Huffman path.");
+    }
+  }
+  return current->ch;
 }
 
 HuffmanTree::~HuffmanTree() = default;
