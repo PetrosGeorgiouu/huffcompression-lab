@@ -194,6 +194,38 @@ We use this to measure the results of statistics based on the most recent change
 
 ### Baseline Results for Decompression
 
+Below are the baseline timed results for the initial decompression implementation.
+
+| Metric                    |           Result |
+| ------------------------- | ---------------: |
+| Median wall-clock latency |   **587.250 ms** |
+| Mean wall-clock latency   |   **596.045 ms** |
+| Best observed latency     |   **571.618 ms** |
+| Standard deviation        |    **23.419 ms** |
+| Coefficient of variation  |        **3.93%** |
+| Median CPU time           |   **585.103 ms** |
+| Mean CPU time             |   **594.400 ms** |
+| Median throughput         | **13.9295 MiB/s** |
+| Mean throughput           | **13.7434 MiB/s** |
+| Peak observed throughput  | **14.3105 MiB/s** |
+
+### Current Results for Decompression
+
+We use this to measure the results of statistics based on the most recent change made. I'll include what we changed most recently also.
+
+| Metric                    |           Result |
+| ------------------------- | ---------------: |
+| Median wall-clock latency |   **587.250 ms** |
+| Mean wall-clock latency   |   **596.045 ms** |
+| Best observed latency     |   **571.618 ms** |
+| Standard deviation        |    **23.419 ms** |
+| Coefficient of variation  |        **3.93%** |
+| Median CPU time           |   **585.103 ms** |
+| Mean CPU time             |   **594.400 ms** |
+| Median throughput         | **13.9295 MiB/s** |
+| Mean throughput           | **13.7434 MiB/s** |
+| Peak observed throughput  | **14.3105 MiB/s** |
+
 ## Acknowledgments
 
 Early versions of my Huffman Coding file were inspired by a C++ implementation done by GeeksforGeeks (https://www.geeksforgeeks.org/cpp/huffman-coding-in-cpp/?_x_tr_hist=true); I also used their tutorial to read from files using C++ (https://www.w3schools.com/cpp/cpp_files.asp).
