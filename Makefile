@@ -1,6 +1,6 @@
 CXX := clang++
 
-# Optimized build settings for compression benchmarks.
+# Optimized build settings for compression and decompression benchmarks.
 CXXFLAGS := -std=c++17 \
             -O2 \
             -g \
@@ -33,6 +33,8 @@ CORPUS_DIR ?= data/corpus
 BENCH_CPU ?= 2
 BENCH_ARGS ?= --benchmark_filter='BM_CompressFile.*' \
               --benchmark_repetitions=30
+DEHUFF_BENCH_ARGS ?= --benchmark_filter='BM_DecompressFile.*' \
+                     --benchmark_repetitions=30
 
 ifeq ($(shell uname -s),Darwin)
 BENCHMARK_PREFIX := $(shell brew --prefix google-benchmark)
@@ -61,6 +63,13 @@ build/huff_profiler: apps/huff_profiler.cpp $(SOURCES) $(HEADERS)
 		-o build/huff_profiler
 
 
+build/dehuff_profiler: apps/dehuff_profiler.cpp $(SOURCES) $(HEADERS)
+	mkdir -p build
+	$(CXX) $(CXXFLAGS) -I$(BENCHMARK_INCLUDE) apps/dehuff_profiler.cpp $(SOURCES) \
+		$(BENCHMARK_LIB) -lpthread \
+		-o build/dehuff_profiler
+
+
 build/corpus: apps/corpus.cpp $(SOURCES) $(HEADERS)
 	mkdir -p build
 	$(CXX) $(CXXFLAGS) apps/corpus.cpp $(SOURCES) \
@@ -73,7 +82,7 @@ build/tests: $(TESTS) $(SOURCES) $(HEADERS)
 		-o build/tests
 
 
-build: build/huff_profiler build/corpus build/tests
+build: build/huff_profiler build/dehuff_profiler build/corpus build/tests
 
 compress: build/huff
 	@if [ -z "$(INPUT)" ] || [ -z "$(OUTPUT)" ]; then \
@@ -97,6 +106,14 @@ else
 endif
 
 
+profile-decompress: build/dehuff_profiler
+ifeq ($(shell uname -s),Linux)
+	taskset -c $(BENCH_CPU) ./build/dehuff_profiler $(DEHUFF_BENCH_ARGS)
+else
+	./build/dehuff_profiler $(DEHUFF_BENCH_ARGS)
+endif
+
+
 corpus: build/corpus
 	./build/corpus "$(CORPUS_DIR)"
 
@@ -110,4 +127,4 @@ clean:
 	rm -rf build
 
 
-.PHONY: build compress decompress profile corpus tests clean
+.PHONY: build compress decompress profile profile-decompress corpus tests clean
