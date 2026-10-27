@@ -123,8 +123,24 @@ tests: build/tests
 	./build/tests
 
 
+leak-check: build/tests
+ifeq ($(shell uname -s),Linux)
+	mkdir -p build/test_output
+	valgrind --tool=memcheck \
+		--leak-check=full \
+		--show-leak-kinds=all \
+		--errors-for-leak-kinds=definite,possible \
+		--error-exitcode=1 \
+		--log-file=build/leak-report.txt \
+		./build/tests
+else
+	@echo "Run make leak-check inside your Linux VM."
+	@exit 1
+endif
+
+
 clean:
 	rm -rf build
 
 
-.PHONY: build compress decompress profile profile-decompress corpus tests clean
+.PHONY: build compress decompress profile profile-decompress corpus tests leak-check clean

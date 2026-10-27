@@ -81,6 +81,15 @@ Run the test cases:
 make tests
 ```
 
+You can check for memory leaks using the Valgrind command:
+
+```bash
+make leak-check
+cat build/leak-report.txt
+```
+
+Note I only configured this to work on Linux Ubunto. This will not work on any other operating system because it's simply a sanity check for myself to ensure the implementation does not have leaks.
+
 Measure compression effectiveness across the corpus of 11 text files:
 
 ```bash
@@ -94,6 +103,12 @@ make profile
 ```
 
 This benchmarks the compressor with 30 repetitions using `data/corpus/complete_project_gutenberg_works_of_george_meredith.txt`. Ensure the benchmark input file is available at that path. Results are discussed in the Performance Analysis section below.
+
+```bash
+make profile-decompress
+```
+
+Runs the decompressor 30 times on `data/corpus/complete_project_gutenberg_works_of_george_meredith.huff`. Similarly, we provide such stats below.
 
 Remove the generated build directory and its contents:
 
