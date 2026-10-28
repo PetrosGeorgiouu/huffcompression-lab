@@ -213,16 +213,16 @@ Below are the baseline timed results for the initial decompression implementatio
 
 | Metric                    |           Result |
 | ------------------------- | ---------------: |
-| Median wall-clock latency |   **587.250 ms** |
-| Mean wall-clock latency   |   **596.045 ms** |
-| Best observed latency     |   **571.618 ms** |
-| Standard deviation        |    **23.419 ms** |
-| Coefficient of variation  |        **3.93%** |
-| Median CPU time           |   **585.103 ms** |
-| Mean CPU time             |   **594.400 ms** |
-| Median throughput         | **13.9295 MiB/s** |
-| Mean throughput           | **13.7434 MiB/s** |
-| Peak observed throughput  | **14.3105 MiB/s** |
+| Median wall-clock latency |   **653.441 ms** |
+| Mean wall-clock latency   |   **655.736 ms** |
+| Best observed latency     |   **647.906 ms** |
+| Standard deviation        |    **10.302 ms** |
+| Coefficient of variation  |        **1.57%** |
+| Median CPU time           |   **651.208 ms** |
+| Mean CPU time             |   **653.869 ms** |
+| Median throughput         | **12.5185 MiB/s** |
+| Mean throughput           | **12.4775 MiB/s** |
+| Peak observed throughput  | **12.6255 MiB/s** |
 
 ### Current Results for Decompression
 
@@ -230,16 +230,16 @@ We use this to measure the results of statistics based on the most recent change
 
 | Metric                    |           Result |
 | ------------------------- | ---------------: |
-| Median wall-clock latency |   **587.250 ms** |
-| Mean wall-clock latency   |   **596.045 ms** |
-| Best observed latency     |   **571.618 ms** |
-| Standard deviation        |    **23.419 ms** |
-| Coefficient of variation  |        **3.93%** |
-| Median CPU time           |   **585.103 ms** |
-| Mean CPU time             |   **594.400 ms** |
-| Median throughput         | **13.9295 MiB/s** |
-| Mean throughput           | **13.7434 MiB/s** |
-| Peak observed throughput  | **14.3105 MiB/s** |
+| Median wall-clock latency |   **653.441 ms** |
+| Mean wall-clock latency   |   **655.736 ms** |
+| Best observed latency     |   **647.906 ms** |
+| Standard deviation        |    **10.302 ms** |
+| Coefficient of variation  |        **1.57%** |
+| Median CPU time           |   **651.208 ms** |
+| Mean CPU time             |   **653.869 ms** |
+| Median throughput         | **12.5185 MiB/s** |
+| Mean throughput           | **12.4775 MiB/s** |
+| Peak observed throughput  | **12.6255 MiB/s** |
 
 ## Acknowledgments
 
