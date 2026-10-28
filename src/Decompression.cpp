@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <string>
 #include "huffman/BitReader.hpp"
-#include "huffman/HuffmanTree.hpp"
+#include "huffman/HuffmanDecoder.hpp"
 
 namespace fs = std::filesystem;
 using namespace std;
@@ -59,7 +59,7 @@ void decompressor(const std::string &inputPath, const std::string &outputPath)
     }
 
     BitReader reader(file);
-    HuffmanTree tree(reader);
+    HuffmanDecoder tree(reader);
 
     for (uint64_t i = 0; i < original_size; ++i)
     {

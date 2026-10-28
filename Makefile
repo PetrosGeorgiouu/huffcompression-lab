@@ -13,6 +13,7 @@ CXXFLAGS := -std=c++17 \
 
 SOURCES := src/FrequencyTable.cpp \
            src/HuffmanTree.cpp \
+           src/HuffmanDecoder.cpp \
            src/Compression.cpp \
            src/BitWriter.cpp \
            src/BitReader.cpp \
@@ -20,6 +21,7 @@ SOURCES := src/FrequencyTable.cpp \
 
 HEADERS := include/huffman/FrequencyTable.hpp \
            include/huffman/HuffmanTree.hpp \
+           include/huffman/HuffmanDecoder.hpp \
            include/huffman/Compression.hpp \
            include/huffman/BitWriter.hpp \
            include/huffman/BitReader.hpp \
