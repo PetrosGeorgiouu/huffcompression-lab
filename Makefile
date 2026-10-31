@@ -32,6 +32,11 @@ TESTS := tests/tests.cpp
 INPUT ?=
 OUTPUT ?=
 CORPUS_DIR ?= data/corpus
+
+# Linux perf recordings and reports stay with other generated build artifacts.
+PERF_ARGS ?= -g
+PERF_DATA := build/perf.compression.data
+DEHUFF_PERF_DATA := build/perf.decompression.data
 BENCH_CPU ?= 2
 BENCH_ARGS ?= --benchmark_filter='BM_CompressFile.*' \
               --benchmark_repetitions=30
@@ -58,23 +63,23 @@ build/dehuff: apps/dehuff.cpp $(SOURCES) $(HEADERS)
 		-o build/dehuff		
 
 
-build/huff_profiler: apps/huff_profiler.cpp $(SOURCES) $(HEADERS)
+build/huff_profiler: benchmarks/huff_profiler.cpp $(SOURCES) $(HEADERS)
 	mkdir -p build
-	$(CXX) $(CXXFLAGS) -I$(BENCHMARK_INCLUDE) apps/huff_profiler.cpp $(SOURCES) \
+	$(CXX) $(CXXFLAGS) -I$(BENCHMARK_INCLUDE) benchmarks/huff_profiler.cpp $(SOURCES) \
 		$(BENCHMARK_LIB) -lpthread \
 		-o build/huff_profiler
 
 
-build/dehuff_profiler: apps/dehuff_profiler.cpp $(SOURCES) $(HEADERS)
+build/dehuff_profiler: benchmarks/dehuff_profiler.cpp $(SOURCES) $(HEADERS)
 	mkdir -p build
-	$(CXX) $(CXXFLAGS) -I$(BENCHMARK_INCLUDE) apps/dehuff_profiler.cpp $(SOURCES) \
+	$(CXX) $(CXXFLAGS) -I$(BENCHMARK_INCLUDE) benchmarks/dehuff_profiler.cpp $(SOURCES) \
 		$(BENCHMARK_LIB) -lpthread \
 		-o build/dehuff_profiler
 
 
-build/corpus: apps/corpus.cpp $(SOURCES) $(HEADERS)
+build/corpus: benchmarks/corpus.cpp $(SOURCES) $(HEADERS)
 	mkdir -p build
-	$(CXX) $(CXXFLAGS) apps/corpus.cpp $(SOURCES) \
+	$(CXX) $(CXXFLAGS) benchmarks/corpus.cpp $(SOURCES) \
 		-o build/corpus
 
 
@@ -116,6 +121,43 @@ else
 endif
 
 
+# Keep profile/profile-decompress as ordinary Google Benchmark runs.
+# These optional Linux targets additionally capture CPU samples with perf.
+perf: build/huff_profiler
+ifeq ($(shell uname -s),Linux)
+	perf record $(PERF_ARGS) -o "$(PERF_DATA)" -- \
+		taskset -c $(BENCH_CPU) ./build/huff_profiler $(BENCH_ARGS)
+else
+	@echo "Run make perf inside your Linux VM."
+	@exit 1
+endif
+
+perf-decompress: build/dehuff_profiler
+ifeq ($(shell uname -s),Linux)
+	perf record $(PERF_ARGS) -o "$(DEHUFF_PERF_DATA)" -- \
+		taskset -c $(BENCH_CPU) ./build/dehuff_profiler $(DEHUFF_BENCH_ARGS)
+else
+	@echo "Run make perf-decompress inside your Linux VM."
+	@exit 1
+endif
+
+perf-report:
+ifeq ($(shell uname -s),Linux)
+	perf report --stdio -i "$(PERF_DATA)" > build/perf.compression.report.txt
+else
+	@echo "Run make perf-report inside your Linux VM."
+	@exit 1
+endif
+
+perf-report-decompress:
+ifeq ($(shell uname -s),Linux)
+	perf report --stdio -i "$(DEHUFF_PERF_DATA)" > build/perf.decompression.report.txt
+else
+	@echo "Run make perf-report-decompress inside your Linux VM."
+	@exit 1
+endif
+
+
 corpus: build/corpus
 	./build/corpus "$(CORPUS_DIR)"
 
@@ -145,4 +187,5 @@ clean:
 	rm -rf build
 
 
-.PHONY: build compress decompress profile profile-decompress corpus tests leak-check clean
+.PHONY: build compress decompress profile profile-decompress corpus tests leak-check clean \
+        perf perf-decompress perf-report perf-report-decompress
