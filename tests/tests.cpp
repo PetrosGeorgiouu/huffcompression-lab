@@ -1859,7 +1859,6 @@ namespace
     // Huffman deserialization and symbol-decoding tests
     // -----------------------------------------------------------------------------
 
-    template <typename Decoder = HuffmanTree>
     void expectDecodeRoundTrip(const std::string &message)
     {
         expect(!message.empty(), "Empty input has no serialized tree");
@@ -1888,7 +1887,7 @@ namespace
 
         std::istringstream input{output.str(), std::ios::in | std::ios::binary};
         BitReader reader{input};
-        Decoder decoder{reader};
+        HuffmanDecoder decoder{reader};
         std::string decoded;
         decoded.reserve(message.size());
         for (std::size_t i = 0; i < message.size(); ++i)
@@ -1900,10 +1899,32 @@ namespace
                     "Decoder consumed the wrong number of payload bits");
     }
 
+    // Encoding trees are built from frequencies; decoders require a serialized tree.
+    static_assert(std::is_constructible_v<HuffmanTree, std::array<uint64_t, 256> &>);
+    static_assert(!std::is_constructible_v<HuffmanTree, BitReader &>);
+    static_assert(std::is_constructible_v<HuffmanDecoder, BitReader &>);
+    static_assert(!std::is_constructible_v<HuffmanDecoder, std::array<uint64_t, 256> &>);
+
+    // Independent fixture writer: marker 0 = internal, 1 = leaf, MSB-first bytes.
+    // Deliberately bypasses HuffmanTree::serialize and its encoding tables.
+    void writeBalancedDecoderFixture(BitWriter &writer, unsigned first, unsigned leaves)
+    {
+        if (leaves == 1)
+        {
+            writer.writeBit(1);
+            writer.writeByte(static_cast<uint8_t>(first));
+            return;
+        }
+        writer.writeBit(0);
+        const unsigned leftLeaves = leaves / 2;
+        writeBalancedDecoderFixture(writer, first, leftLeaves);
+        writeBalancedDecoderFixture(writer, first + leftLeaves, leaves - leftLeaves);
+    }
+
     TestSuite runHuffmanDecodingTests()
     {
-        TestSuite suite{"Huffman Decoding"};
-        std::cout << "\n=== Huffman Decoding ===\n";
+        TestSuite suite{"Huffman Decoder"};
+        std::cout << "\n=== Huffman Decoder ===\n";
 
         suite.run("fixed preorder fixture decodes left and nested right paths", []
                   {
@@ -1913,7 +1934,7 @@ namespace
             // Fixed bytes deliberately avoid relying on the production serializer.
             auto input = makeBitReaderInput({0x50, 0x54, 0x2A, 0x1A, 0xD5});
             BitReader reader{input};
-            const HuffmanTree decoder{reader};
+            const HuffmanDecoder decoder{reader};
             for (char expected : std::string{"ABCA"})
             {
                 expectEqual(decoder.decodeSymbol(), expected,
@@ -1966,134 +1987,6 @@ namespace
                   {
             auto input = makeBitReaderInput({});
             BitReader reader{input};
-            expectReadError([&] { HuffmanTree decoder{reader}; },
-                            "Missing tree should throw"); });
-        suite.run("truncated leaf character rejects reconstruction", []
-                  {
-            // Leaf marker plus only seven of the required eight character bits.
-            auto input = makeBitReaderInput({0xA0});
-            BitReader reader{input};
-            expectReadError([&] { HuffmanTree decoder{reader}; },
-                            "Incomplete leaf should throw"); });
-        suite.run("internal node missing right subtree rejects reconstruction", []
-                  {
-            // 0 | 1 01000001 | 1 01000010 needs 19 bits; only 16 are present.
-            auto input = makeBitReaderInput({0x50, 0x68});
-            BitReader reader{input};
-            expectReadError([&] { HuffmanTree decoder{reader}; },
-                            "Incomplete right subtree should throw"); });
-        suite.run("single-symbol decoder rejects a nonzero payload bit", []
-                  {
-            // 1 | 01000001 | 1, followed by padding.
-            auto input = makeBitReaderInput({0xA0, 0xE0});
-            BitReader reader{input};
-            HuffmanTree decoder{reader};
-            expectReadError([&] { (void)decoder.decodeSymbol(); },
-                            "Single-symbol code must be zero"); });
-        suite.run("decoder throws when payload is exhausted", []
-                  {
-            // Tree internal(A,B) is 19 bits; five remaining bits encode five As.
-            auto input = makeBitReaderInput({0x50, 0x68, 0x40});
-            BitReader reader{input};
-            HuffmanTree decoder{reader};
-            for (int i = 0; i < 5; ++i)
-                expectEqual(decoder.decodeSymbol(), 'A', "Expected A before EOF");
-            expectReadError([&] { (void)decoder.decodeSymbol(); },
-                            "Reading beyond physical payload should throw"); });
-        suite.run("frequency-built tree rejects decoding without an attached reader", []
-                  {
-            std::array<uint64_t, 256> frequencies{};
-            frequencies['A'] = 1;
-            HuffmanTree tree{frequencies};
-            expectReadError([&] { (void)tree.decodeSymbol(); },
-                            "Decoding without a reader should throw"); });
-
-        suite.printSummary();
-        return suite;
-    }
-
-    // Independent fixture writer: marker 0 = internal, 1 = leaf, MSB-first bytes.
-    // Deliberately bypasses HuffmanTree::serialize and its encoding tables.
-    void writeBalancedDecoderFixture(BitWriter &writer, unsigned first, unsigned leaves)
-    {
-        if (leaves == 1)
-        {
-            writer.writeBit(1);
-            writer.writeByte(static_cast<uint8_t>(first));
-            return;
-        }
-        writer.writeBit(0);
-        const unsigned leftLeaves = leaves / 2;
-        writeBalancedDecoderFixture(writer, first, leftLeaves);
-        writeBalancedDecoderFixture(writer, first + leftLeaves, leaves - leftLeaves);
-    }
-
-    TestSuite runArrayHuffmanDecodingTests()
-    {
-        TestSuite suite{"Array Huffman Decoder"};
-        std::cout << "\n=== Array Huffman Decoder ===\n";
-
-        suite.run("fixed preorder fixture decodes left and nested right paths", []
-                  {
-            // Tree: internal(A, internal(B, C)); codes A=0, B=10, C=11.
-            // Tree bits: 0|1 01000001|0|1 01000010|1 01000011 (29 bits).
-            // Payload ABCA: 0|10|11|0; sentinel: 10101; no padding needed.
-            // Fixed bytes deliberately avoid relying on the production serializer.
-            auto input = makeBitReaderInput({0x50, 0x54, 0x2A, 0x1A, 0xD5});
-            BitReader reader{input};
-            const HuffmanDecoder decoder{reader};
-            for (char expected : std::string{"ABCA"})
-            {
-                expectEqual(decoder.decodeSymbol(), expected,
-                            "Fixed fixture decoded an incorrect symbol");
-            }
-            expectEqual(reader.readBits(5), uint64_t{0b10101},
-                        "Tree/payload parsing lost the exact bit position"); });
-
-        suite.run("one character consumes its one-bit code", []
-                  { expectDecodeRoundTrip<HuffmanDecoder>("A"); });
-        suite.run("repeated single symbol consumes every code bit", []
-                  { expectDecodeRoundTrip<HuffmanDecoder>(std::string(1000, 'A')); });
-        suite.run("single null-byte symbol decodes correctly", []
-                  { expectDecodeRoundTrip<HuffmanDecoder>(std::string(17, '\0')); });
-        suite.run("single high-byte symbol decodes correctly", []
-                  { expectDecodeRoundTrip<HuffmanDecoder>(std::string(19, static_cast<char>(0xFF))); });
-        suite.run("two-symbol message crosses unaligned tree boundary", []
-                  { expectDecodeRoundTrip<HuffmanDecoder>("ABABBAABABBA"); });
-        suite.run("varying code lengths reset traversal for each symbol", []
-                  { expectDecodeRoundTrip<HuffmanDecoder>("BANANA BANDANA\n"); });
-        suite.run("all 256 byte values survive decoding", []
-                  {
-            std::string message;
-            for (int byte = 0; byte < 256; ++byte)
-                message.push_back(static_cast<char>(byte));
-            expectDecodeRoundTrip<HuffmanDecoder>(message); });
-        suite.run("large deterministic binary message crosses reader refills", []
-                  {
-            std::string message;
-            uint32_t state{0x12345678};
-            for (std::size_t i = 0; i < 200000; ++i)
-            {
-                state = state * UINT32_C(1664525) + UINT32_C(1013904223);
-                message.push_back(static_cast<char>(state >> 24));
-            }
-            expectDecodeRoundTrip<HuffmanDecoder>(message); });
-        suite.run("skewed frequencies decode long and short paths", []
-                  {
-            std::string message;
-            std::size_t previous{1}, count{1};
-            for (int symbol = 0; symbol < 16; ++symbol)
-            {
-                message.append(count, static_cast<char>(symbol));
-                const auto next = previous + count;
-                previous = count;
-                count = next;
-            }
-            expectDecodeRoundTrip<HuffmanDecoder>(message); });
-        suite.run("empty serialized input rejects reconstruction", []
-                  {
-            auto input = makeBitReaderInput({});
-            BitReader reader{input};
             expectReadError([&] { HuffmanDecoder decoder{reader}; },
                             "Missing tree should throw"); });
         suite.run("truncated leaf character rejects reconstruction", []
@@ -2129,7 +2022,7 @@ namespace
             expectReadError([&] { (void)decoder.decodeSymbol(); },
                             "Reading beyond physical payload should throw"); });
 
-        suite.run("balanced 256-symbol tree uses all 511 node slots", []
+        suite.run("balanced 256-symbol tree decodes every byte in both directions", []
                   {
             std::ostringstream output{std::ios::out | std::ios::binary};
             {
@@ -2189,7 +2082,7 @@ namespace
             expectEqual(reader.readBits(5), uint64_t{0b10101},
                         "Deep-path decoding consumed the wrong number of bits"); });
 
-        suite.run("513-node serialized tree is rejected instead of overflowing array", []
+        suite.run("513-node serialized tree exceeds the decoder node bound", []
                   {
             std::ostringstream output{std::ios::out | std::ios::binary};
             {
@@ -2478,9 +2371,6 @@ int main()
     const TestSuite decodingSuite{
         runHuffmanDecodingTests()};
 
-    const TestSuite arrayDecodingSuite{
-        runArrayHuffmanDecodingTests()};
-
     const TestSuite compressorSuite{
         runCompressorTests()};
 
@@ -2495,7 +2385,6 @@ int main()
         bitWriterSuite.passed() +
         bitReaderSuite.passed() +
         decodingSuite.passed() +
-        arrayDecodingSuite.passed() +
         compressorSuite.passed() +
         decompressorSuite.passed()};
 
@@ -2507,7 +2396,6 @@ int main()
         bitWriterSuite.total() +
         bitReaderSuite.total() +
         decodingSuite.total() +
-        arrayDecodingSuite.total() +
         compressorSuite.total() +
         decompressorSuite.total()};
 

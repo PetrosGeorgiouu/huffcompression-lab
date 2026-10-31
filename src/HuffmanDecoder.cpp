@@ -3,7 +3,8 @@
 #include "huffman/HuffmanDecoder.hpp"
 #include "huffman/BitReader.hpp"
 
-struct HuffmanDecoder::Node {
+struct HuffmanDecoder::Node
+{
   std::unique_ptr<Node> left;
   std::unique_ptr<Node> right;
   char symbol;
@@ -11,7 +12,9 @@ struct HuffmanDecoder::Node {
   Node(char ch,
        std::unique_ptr<Node> left = nullptr,
        std::unique_ptr<Node> right = nullptr)
-      : symbol(ch), left(std::move(left)), right(std::move(right))
+      : left(std::move(left)),
+        right(std::move(right)),
+        symbol(ch)
   {
   }
 
@@ -31,15 +34,20 @@ HuffmanDecoder::~HuffmanDecoder() = default;
 std::unique_ptr<HuffmanDecoder::Node>
 HuffmanDecoder::deserializeHelper()
 {
+  if (nodeCount_ >= MAX_NODES)
+  {
+    throw std::runtime_error("Invalid Huffman tree: exceeds 511 nodes.");
+  }
+  ++nodeCount_;
   const uint8_t marker = reader_.readBit();
   if (marker == 1)
   {
     const char ch = static_cast<char>(reader_.readByte());
-    return std::make_unique<Node>(ch, 0);
+    return std::make_unique<Node>(ch);
   }
   auto left = deserializeHelper();
   auto right = deserializeHelper();
-  return std::make_unique<Node>('\0', 0, std::move(left), std::move(right));
+  return std::make_unique<Node>('\0', std::move(left), std::move(right));
 }
 
 char HuffmanDecoder::decodeSymbol() const
@@ -53,7 +61,7 @@ char HuffmanDecoder::decodeSymbol() const
   {
     if (reader_.readBit() != 0)
     {
-      throw runtime_error("Invalid bit for single symbol tree.");
+      throw std::runtime_error("Invalid bit for single symbol tree.");
     }
     return current->symbol;
   }
@@ -64,7 +72,7 @@ char HuffmanDecoder::decodeSymbol() const
 
     if (!current)
     {
-      throw runtime_error("Invalid Huffman path.");
+      throw std::runtime_error("Invalid Huffman path.");
     }
   }
   return current->symbol;

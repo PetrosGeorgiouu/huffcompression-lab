@@ -20,7 +20,8 @@ public:
 private:
   struct Node;
   std::unique_ptr<Node> root;
-  // std::size_t size = 0;
+  static constexpr std::size_t MAX_NODES = 2 * 256 - 1;
+  std::size_t nodeCount_ = 0;
   BitReader &reader_;
   std::unique_ptr<Node> deserializeHelper();
 };
