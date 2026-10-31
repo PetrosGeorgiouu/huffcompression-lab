@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <array>
 #include "huffman/BitReader.hpp"
 #include "huffman/HuffmanDecoder.hpp"
 #include "huffman/HuffmanDecoder.hpp"
@@ -61,12 +62,25 @@ void decompressor(const std::string &inputPath, const std::string &outputPath)
 
     BitReader reader(file);
     HuffmanDecoder tree(reader);
+    std::array<char, 64 * 1024> buffer;
+    std::size_t used = 0;
 
     for (uint64_t i = 0; i < original_size; ++i)
     {
-        outputFile.put(tree.decodeSymbol());
-    }
+        buffer[used++] = static_cast<char>(tree.decodeSymbol());
 
+        if (used == buffer.size())
+        {
+            outputFile.write(buffer.data(),
+                         static_cast<std::streamsize>(used));
+            used = 0;
+        }
+    }
+    if (used != 0)
+    {
+        outputFile.write(buffer.data(),
+                     static_cast<std::streamsize>(used));
+    }
     outputFile.flush();
     if (!outputFile)
     {
