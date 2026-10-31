@@ -1,7 +1,10 @@
+#pragma once
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 
 class BitReader;
 class HuffmanDecoder
@@ -15,21 +18,9 @@ public:
   HuffmanDecoder &operator=(const HuffmanDecoder &) = delete;
 
 private:
-  static constexpr uint16_t noChild =
-      std::numeric_limits<uint16_t>::max();
-  struct Node
-  {
-    uint16_t left = noChild;
-    uint16_t right = noChild;
-    char symbol = {};
-
-    bool isLeaf() const noexcept
-    {
-      return left == noChild;
-    }
-  };
+  struct Node;
+  std::unique_ptr<Node> root;
+  // std::size_t size = 0;
   BitReader &reader_;
-  std::size_t size = 0;
-  std::array<Node, 511> tree{};
-  uint16_t deserializeHelper();
+  std::unique_ptr<Node> deserializeHelper();
 };

@@ -8,6 +8,7 @@
 #include <string>
 #include "huffman/BitReader.hpp"
 #include "huffman/HuffmanDecoder.hpp"
+#include "huffman/HuffmanDecoder.hpp"
 
 namespace fs = std::filesystem;
 using namespace std;
