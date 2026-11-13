@@ -2028,6 +2028,62 @@ namespace
                         "Peek/consume broke a subsequent 64-bit read");
             expectEqual(reader.readByte(), bytes[16], "Full-width read lost final byte"); });
 
+        suite.run("byte reads preserve full and partial 64 KiB input blocks", []
+                  {
+            for (std::size_t size : {65535u, 65536u, 65537u, 131071u, 131072u, 131073u})
+            {
+                std::vector<uint8_t> bytes(size);
+                for (std::size_t i = 0; i < size; ++i)
+                    bytes[i] = static_cast<uint8_t>((i * 73 + i / 256 + 19) & 255);
+                auto input = makeBitReaderInput(bytes);
+                BitReader reader{input};
+                for (uint8_t byte : bytes)
+                    expectEqual(reader.readByte(), byte, "Byte changed across an input block boundary");
+                uint64_t value{};
+                expect(!reader.tryPeekBits(1, value), "Exhausted input buffer exposed extra bits");
+                expectReadError([&] { (void)reader.readBit(); }, "Read after the final buffered byte must throw");
+            } });
+
+        suite.run("unaligned peeks bridge the 64 KiB input block boundary", []
+                  {
+            std::vector<uint8_t> bytes(65536 + 16);
+            for (std::size_t i = 0; i < bytes.size(); ++i)
+                bytes[i] = static_cast<uint8_t>((i * 37 + i / 97 + 11) & 255);
+            for (unsigned offset = 0; offset < 64; ++offset)
+            {
+                auto input = makeBitReaderInput(bytes);
+                BitReader reader{input};
+                for (std::size_t i = 0; i < 65536 - 8; ++i)
+                    (void)reader.readByte();
+                (void)reader.readBits(offset);
+                const std::size_t position = (65536 - 8) * 8 + offset;
+                uint64_t value{};
+                expect(reader.tryPeekBits(56, value), "Expected cross-block lookahead");
+                expectEqual(value, fixtureBits(bytes, position, 56), "Cross-block peek lost unread reservoir bits");
+                reader.consumeBits(7);
+                expectEqual(reader.readBits(64), fixtureBits(bytes, position + 7, 64),
+                            "Cross-block lookahead broke the following bulk read");
+            } });
+
+        suite.run("failed lookahead preserves short tails in a partial second input block", []
+                  {
+            std::vector<uint8_t> bytes(65537, 0xA5);
+            bytes.back() = 0x96;
+            for (unsigned tail = 1; tail < 10; ++tail)
+            {
+                auto input = makeBitReaderInput(bytes);
+                BitReader reader{input};
+                const std::size_t position = bytes.size() * 8 - tail;
+                for (std::size_t i = 0; i < position / 8; ++i)
+                    (void)reader.readByte();
+                (void)reader.readBits(position % 8);
+                uint64_t value{};
+                expect(!reader.tryPeekBits(10, value), "Insufficient final lookahead should fail");
+                expectEqual(reader.readBits(tail), fixtureBits(bytes, position, tail),
+                            "EOF discarded bytes already held in the input buffer or reservoir");
+                expect(!reader.tryPeekBits(1, value), "Tail read should exhaust physical input");
+            } });
+
         suite.printSummary();
         return suite;
     }
@@ -2378,6 +2434,23 @@ namespace
             for (unsigned i = 0; i < 65; ++i)
                 expectEqual(decoder.decodeSymbol(), '\0', "Single-symbol code consumed the wrong bit");
             expectReadError([&] { (void)decoder.decodeSymbol(); }, "Single-symbol validation must stay active"); });
+
+        suite.run("lookup decoding spans multiple 64 KiB input blocks", []
+                  {
+            constexpr unsigned repetitions = 65539;
+            const std::string message{"BADCADAB"};
+            const std::string payload{"1001111100111010"};
+            std::string bits = shortLookupTreeBits();
+            for (unsigned i = 0; i < repetitions; ++i)
+                bits += payload;
+            const auto bytes = packFixtureBits(bits + "1010010111000011");
+            auto input = makeBitReaderInput(bytes);
+            BitReader reader{input};
+            const HuffmanDecoder decoder{reader};
+            for (unsigned i = 0; i < repetitions; ++i)
+                for (char symbol : message)
+                    expectEqual(decoder.decodeSymbol(), symbol, "Input block refill changed a decoded symbol");
+            expectEqual(reader.readBits(16), uint64_t{0xA5C3}, "Cross-block decoding consumed the sentinel"); });
 
         suite.printSummary();
         return suite;

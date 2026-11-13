@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <fstream>
 #include <cassert>
+#include <array>
 
 using namespace std;
 
@@ -44,5 +45,12 @@ class BitReader
         uint64_t current_position;
         unsigned valid_bits;
 
+        static constexpr std::size_t INPUT_BUFFER_SIZE = 64 * 1024;
+        std::array<char, INPUT_BUFFER_SIZE> input_buffer_;
+        std::size_t input_position_ = 0;
+        std::size_t input_size_ = 0;
+        bool input_eof_ = false;
+
+        bool refillInputBuffer();
         bool refill();
 };

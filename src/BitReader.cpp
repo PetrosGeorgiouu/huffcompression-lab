@@ -11,6 +11,21 @@ BitReader::BitReader(istream &input)
 {
 }
 
+bool BitReader::refillInputBuffer() {
+    if (input_eof_) {
+        return false;
+    }
+    inputFile.read(input_buffer_.data(), static_cast<streamsize>(input_buffer_.size()));
+    const streamsize bytesRead = inputFile.gcount();
+    if (inputFile.bad() || (inputFile.fail() && !inputFile.eof())){
+        throw runtime_error("Failed to read from input file");
+    }
+    input_position_ = 0;
+    input_size_ = static_cast<std::size_t>(bytesRead);
+    input_eof_ = inputFile.eof();
+    return input_size_ != 0;
+}
+
 bool BitReader::refill()
 {
     const unsigned remaining =
@@ -32,24 +47,21 @@ bool BitReader::refill()
     {
         return false;
     }
-    char bytes[8];
-    inputFile.read(bytes, bytesToRead);
-    const streamsize bytesRead = inputFile.gcount();
+    unsigned appended = 0;
+    for (unsigned i = 0; i < bytesToRead; ++i)
+    {
+        if (input_position_ == input_size_ && !refillInputBuffer())
+        {
+            break;
+        }
 
-    if (inputFile.bad() || (inputFile.fail() && !inputFile.eof()))
-    {
-        throw runtime_error("Failed to read from input file");
-    }
-    for (streamsize i = 0; i < bytesRead; ++i)
-    {
         const uint64_t byte =
-            static_cast<unsigned char>(bytes[i]);
-
+            static_cast<unsigned char>(input_buffer_[input_position_++]);
         current_bytes |= byte << (56 - valid_bits);
         valid_bits += 8;
+        ++appended;
     }
-
-    return bytesRead > 0;
+    return appended != 0;
 }
 
 uint64_t BitReader::readBits(uint64_t size)
