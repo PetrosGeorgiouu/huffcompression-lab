@@ -1507,6 +1507,65 @@ namespace
         throw TestFailure{message};
     }
 
+    // Reference extraction uses fixture bytes, independently of BitReader/Writer.
+    uint64_t fixtureBits(const std::vector<uint8_t> &bytes,
+                         std::size_t offset, unsigned width)
+    {
+        expect(width <= 64 && offset + width <= bytes.size() * 8,
+               "Invalid reference bit range");
+        uint64_t value{0};
+        for (unsigned i = 0; i < width; ++i)
+        {
+            const auto position = offset + i;
+            value = (value << 1) |
+                    ((bytes[position / 8] >> (7 - position % 8)) & 1u);
+        }
+        return value;
+    }
+
+    // Pack literal MSB-first bits; final-byte zero padding is physical input.
+    std::vector<uint8_t> packFixtureBits(const std::string &bits)
+    {
+        std::vector<uint8_t> bytes((bits.size() + 7) / 8, 0);
+        for (std::size_t i = 0; i < bits.size(); ++i)
+        {
+            expect(bits[i] == '0' || bits[i] == '1', "Invalid fixture bit");
+            if (bits[i] == '1')
+                bytes[i / 8] |= static_cast<uint8_t>(1u << (7 - i % 8));
+        }
+        return bytes;
+    }
+
+    std::string fixtureByteBits(uint8_t byte)
+    {
+        std::string bits;
+        for (int shift = 7; shift >= 0; --shift)
+            bits.push_back(((byte >> shift) & 1u) ? '1' : '0');
+        return bits;
+    }
+
+    std::string fixtureLeaf(uint8_t symbol)
+    {
+        return "1" + fixtureByteBits(symbol);
+    }
+
+    // A=0, B=10, C=110, D=111. Tree length is 39 bits.
+    std::string shortLookupTreeBits()
+    {
+        return "0" + fixtureLeaf('A') + "0" + fixtureLeaf('B') +
+               "0" + fixtureLeaf('C') + fixtureLeaf('D');
+    }
+
+    // Symbols 0..10 have code 1^symbol followed by 0; symbol 11 is 1^11.
+    // This includes both a ten-bit code and eleven-bit fallback codes.
+    std::string longLookupTreeBits()
+    {
+        std::string bits;
+        for (unsigned symbol = 0; symbol < 11; ++symbol)
+            bits += "0" + fixtureLeaf(static_cast<uint8_t>(symbol));
+        return bits + fixtureLeaf(11);
+    }
+
     TestSuite runBitReaderTests()
     {
         TestSuite suite{"BitReader"};
@@ -1847,6 +1906,128 @@ namespace
             expectEqual(reader.readBits(6), uint64_t{0b110011},
                         "Reading after a header changed the payload bit order"); });
 
+        suite.run("zero-bit peeks and consumes preserve the cursor even at EOF", []
+                  {
+            auto input = makeBitReaderInput({0xA5});
+            BitReader reader{input};
+            uint64_t value{99};
+            expect(reader.tryPeekBits(0, value), "Zero-bit peek should succeed");
+            expectEqual(value, uint64_t{0}, "Zero-bit peek should return zero");
+            reader.consumeBits(0);
+            expectEqual(reader.readByte(), uint8_t{0xA5}, "Zero operations consumed data");
+            expect(reader.tryPeekBits(0, value), "Zero-bit peek should succeed at EOF");
+            reader.consumeBits(0);
+            expect(!reader.tryPeekBits(1, value), "Nonzero peek should fail at EOF"); });
+
+        suite.run("repeated peeks do not consume and shorter consumes preserve lookahead", []
+                  {
+            auto input = makeBitReaderInput({0xB9, 0xE3, 0x57});
+            BitReader reader{input};
+            uint64_t value{};
+            for (int repeat = 0; repeat < 3; ++repeat)
+            {
+                expect(reader.tryPeekBits(10, value), "Expected ten buffered bits");
+                expectEqual(value, uint64_t{0b1011100111}, "Repeated peek moved the cursor");
+            }
+            reader.consumeBits(2);
+            expect(reader.tryPeekBits(10, value), "Expected shifted lookahead");
+            expectEqual(value, uint64_t{0b1110011110}, "Consume lost unconsumed peek bits");
+            expectEqual(reader.readBits(6), uint64_t{0b111001}, "Bulk read disagrees with peek");
+            expectEqual(reader.readByte(), uint8_t{0xE3}, "Mixed operations lost byte position");
+            expectEqual(reader.readBits(8), uint64_t{0x57}, "Mixed operations lost final byte"); });
+
+        suite.run("every supported peek width works at every reservoir bit offset", []
+                  {
+            std::vector<uint8_t> bytes;
+            for (unsigned i = 0; i < 24; ++i)
+                bytes.push_back(static_cast<uint8_t>(i * 73 + 19));
+            for (unsigned offset = 0; offset < 64; ++offset)
+            {
+                for (unsigned width = 1; width <= 56; ++width)
+                {
+                    auto input = makeBitReaderInput(bytes);
+                    BitReader reader{input};
+                    for (unsigned bit = 0; bit < offset; ++bit)
+                        (void)reader.readBit();
+                    uint64_t value{};
+                    expect(reader.tryPeekBits(width, value), "Peek unexpectedly failed");
+                    expectEqual(value, fixtureBits(bytes, offset, width),
+                                "Peek corrupted bits at a refill or alignment boundary");
+                    reader.consumeBits(width);
+                    expectEqual(reader.readBits(8), fixtureBits(bytes, offset + width, 8),
+                                "Consume advanced by the wrong width");
+                }
+            } });
+
+        suite.run("failed ten-bit peeks preserve each possible short EOF tail", []
+                  {
+            const std::vector<uint8_t> bytes{0x93, 0xA5, 0x67, 0xD1,
+                                             0xBE, 0x20, 0x4F, 0xC3, 0x96};
+            for (unsigned tail = 1; tail < 10; ++tail)
+            {
+                auto input = makeBitReaderInput(bytes);
+                BitReader reader{input};
+                const unsigned offset = static_cast<unsigned>(bytes.size() * 8) - tail;
+                for (unsigned bit = 0; bit < offset; ++bit)
+                    (void)reader.readBit();
+                uint64_t value{};
+                expect(!reader.tryPeekBits(10, value), "Short tail must reject ten-bit peek");
+                expect(!reader.tryPeekBits(10, value), "Repeated failed peek should stay false");
+                expect(reader.tryPeekBits(tail, value), "Smaller peek must still succeed");
+                expectEqual(value, fixtureBits(bytes, offset, tail), "Failed peek discarded tail bits");
+                expectEqual(reader.readBits(tail), value, "Fallback read lost the EOF tail");
+                expect(!reader.tryPeekBits(1, value), "Peek must not fabricate bits past EOF");
+                expectReadError([&] { (void)reader.readBit(); }, "Read past consumed tail must throw");
+            } });
+
+        suite.run("empty peek fails without creating input bits", []
+                  {
+            auto input = makeBitReaderInput({});
+            BitReader reader{input};
+            uint64_t value{};
+            expect(!reader.tryPeekBits(10, value), "Empty input cannot satisfy lookahead");
+            expect(!reader.tryPeekBits(1, value), "Empty peek must remain false");
+            expectReadError([&] { (void)reader.readBit(); }, "Empty read must still throw"); });
+
+        suite.run("oversized peeks throw without consuming input", []
+                  {
+            auto input = makeBitReaderInput({0xA5});
+            BitReader reader{input};
+            uint64_t value{};
+            for (unsigned width : {57u, 64u, 65u})
+                expectQueueException<std::invalid_argument>(
+                    [&] { (void)reader.tryPeekBits(width, value); },
+                    "Peek widths above 56 must be rejected");
+            expectEqual(reader.readByte(), uint8_t{0xA5}, "Invalid peek consumed input"); });
+
+        suite.run("peeking propagates stream failures rather than reporting normal EOF", []
+                  {
+            for (auto state : {std::ios::badbit, std::ios::failbit})
+            {
+                auto input = makeBitReaderInput({0xA5});
+                input.setstate(state);
+                BitReader reader{input};
+                uint64_t value{};
+                expectReadError([&] { (void)reader.tryPeekBits(10, value); },
+                                "Input failure must throw during a peek");
+            } });
+
+        suite.run("full-width reads remain correct after a cross-buffer peek", []
+                  {
+            const std::vector<uint8_t> bytes{0x13, 0xA5, 0x67, 0xD1, 0xBE, 0x20,
+                                             0x4F, 0xC3, 0x96, 0x77, 0x81, 0xE2,
+                                             0x35, 0x49, 0xBA, 0x0D, 0xFE};
+            auto input = makeBitReaderInput(bytes);
+            BitReader reader{input};
+            (void)reader.readBits(61);
+            uint64_t value{};
+            expect(reader.tryPeekBits(10, value), "Expected lookahead across the refill");
+            expectEqual(value, fixtureBits(bytes, 61, 10), "Cross-buffer peek mismatch");
+            reader.consumeBits(3);
+            expectEqual(reader.readBits(64), fixtureBits(bytes, 64, 64),
+                        "Peek/consume broke a subsequent 64-bit read");
+            expectEqual(reader.readByte(), bytes[16], "Full-width read lost final byte"); });
+
         suite.printSummary();
         return suite;
     }
@@ -2096,6 +2277,107 @@ namespace
             BitReader reader{input};
             expectReadError([&] { HuffmanDecoder decoder{reader}; },
                             "A tree exceeding 511 nodes must be rejected"); });
+
+        // These tests target the current ten-bit lookup configuration through
+        // public behavior. They do not require access to the private table.
+        suite.run("all 1024 lookahead patterns select the right symbol and code length", []
+                  {
+            for (unsigned pattern = 0; pattern < 1024; ++pattern)
+            {
+                std::string payload;
+                for (int shift = 9; shift >= 0; --shift)
+                    payload.push_back(((pattern >> shift) & 1u) ? '1' : '0');
+                const auto bytes = packFixtureBits(shortLookupTreeBits() + payload + "1010010111000011");
+                auto input = makeBitReaderInput(bytes);
+                BitReader reader{input};
+                const HuffmanDecoder decoder{reader};
+                const unsigned width = pattern < 512 ? 1 : pattern < 768 ? 2 : 3;
+                const char symbol = pattern < 512 ? 'A' : pattern < 768 ? 'B' : pattern < 896 ? 'C' : 'D';
+                expectEqual(decoder.decodeSymbol(), symbol,
+                            "Incorrect symbol for prefix " + std::to_string(pattern));
+                expectEqual(reader.readBits(10 - width), fixtureBits(bytes, 39 + width, 10 - width),
+                            "Lookup consumed bits belonging to later symbols");
+                expectEqual(reader.readBits(16), uint64_t{0xA5C3}, "Lookup consumed the sentinel");
+            } });
+
+        suite.run("mixed one two and three bit codes decode at every reservoir offset", []
+                  {
+            const std::string message{"BADCADAB"};
+            const std::string payload{"1001111100111010"};
+            for (unsigned offset = 0; offset < 64; ++offset)
+            {
+                const auto bytes = packFixtureBits(std::string(offset, '1') + shortLookupTreeBits() +
+                                                  payload + "1010010111000011");
+                auto input = makeBitReaderInput(bytes);
+                BitReader reader{input};
+                for (unsigned bit = 0; bit < offset; ++bit)
+                    (void)reader.readBit();
+                const HuffmanDecoder decoder{reader};
+                for (char symbol : message)
+                    expectEqual(decoder.decodeSymbol(), symbol, "Mixed code lengths lost their bit position");
+                expectEqual(reader.readBits(16), uint64_t{0xA5C3}, "Decoding consumed the trailing field");
+            } });
+
+        suite.run("ten-bit codes and eleven-bit fallbacks alternate without losing bits", []
+                  {
+            const std::vector<unsigned> symbols{9, 10, 0, 11, 1, 9, 0, 10, 11, 0};
+            std::string bits = longLookupTreeBits();
+            for (unsigned symbol : symbols)
+                bits += std::string(symbol, '1') + (symbol == 11 ? "" : "0");
+            const auto bytes = packFixtureBits(bits + "1010010111000011");
+            auto input = makeBitReaderInput(bytes);
+            BitReader reader{input};
+            const HuffmanDecoder decoder{reader};
+            for (unsigned symbol : symbols)
+                expectEqual(static_cast<unsigned char>(decoder.decodeSymbol()),
+                            static_cast<unsigned char>(symbol), "Lookup/fallback transition changed a symbol");
+            expectEqual(reader.readBits(16), uint64_t{0xA5C3}, "Fallback consumed the wrong code length"); });
+
+        suite.run("failed lookahead still decodes every physical tail length below ten bits", []
+                  {
+            const std::string tree = "0" + fixtureLeaf('A') + fixtureLeaf('B');
+            for (unsigned tail = 1; tail < 10; ++tail)
+            {
+                // Align the end exactly: no padding can hide an EOF bug.
+                const unsigned prefix = (8 - ((19 + tail) % 8)) % 8;
+                std::string payload;
+                for (unsigned bit = 0; bit < tail; ++bit)
+                    payload.push_back(bit % 2 ? '1' : '0');
+                const auto bytes = packFixtureBits(std::string(prefix, '0') + tree + payload);
+                auto input = makeBitReaderInput(bytes);
+                BitReader reader{input};
+                for (unsigned bit = 0; bit < prefix; ++bit)
+                    (void)reader.readBit();
+                const HuffmanDecoder decoder{reader};
+                uint64_t lookahead{};
+                expect(!reader.tryPeekBits(10, lookahead), "Tail fixture unexpectedly has ten bits");
+                for (unsigned bit = 0; bit < tail; ++bit)
+                    expectEqual(decoder.decodeSymbol(), bit % 2 ? 'B' : 'A',
+                                "Failed peek lost a valid short code at EOF");
+                expectReadError([&] { (void)decoder.decodeSymbol(); }, "Exhausted tail must throw");
+            } });
+
+        suite.run("truncated long code is rejected without treating absent bits as zero", []
+                  {
+            // The 119-bit tree plus nine ones is exactly 128 bits. Nine ones
+            // reach an internal node; no complete symbol or padding remains.
+            const auto bytes = packFixtureBits(longLookupTreeBits() + std::string(9, '1'));
+            auto input = makeBitReaderInput(bytes);
+            BitReader reader{input};
+            const HuffmanDecoder decoder{reader};
+            expectReadError([&] { (void)decoder.decodeSymbol(); }, "Truncated long code must throw"); });
+
+        suite.run("single-symbol zero codes retain validation with ample lookahead", []
+                  {
+            // More than ten bits remain when the invalid bit is encountered.
+            const auto bytes = packFixtureBits(fixtureLeaf(0) + std::string(65, '0') +
+                                              "1" + std::string(16, '0'));
+            auto input = makeBitReaderInput(bytes);
+            BitReader reader{input};
+            const HuffmanDecoder decoder{reader};
+            for (unsigned i = 0; i < 65; ++i)
+                expectEqual(decoder.decodeSymbol(), '\0', "Single-symbol code consumed the wrong bit");
+            expectReadError([&] { (void)decoder.decodeSymbol(); }, "Single-symbol validation must stay active"); });
 
         suite.printSummary();
         return suite;

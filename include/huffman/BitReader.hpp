@@ -12,6 +12,8 @@ class BitReader
         uint64_t readBits(uint64_t size);
         uint8_t readBit();
         uint8_t readByte();
+        bool tryPeekBits(unsigned size, uint64_t& value);
+        void consumeBits(unsigned size);
 
     private:
         istream &inputFile;

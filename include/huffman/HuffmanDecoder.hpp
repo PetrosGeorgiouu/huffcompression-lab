@@ -19,6 +19,15 @@ public:
 
 private:
   struct Node;
+  struct Entry {
+  char symbol = '\0';
+  uint64_t bitsConsumed = 0;
+};
+
+  static constexpr std::size_t LOOKUP_BITS = 10;
+  static constexpr std::size_t TABLE_SIZE = std::size_t{1} << LOOKUP_BITS; 
+  std::array<Entry, TABLE_SIZE> table_{};
+  void buildLookupTable();
   std::unique_ptr<Node> root;
   static constexpr std::size_t MAX_NODES = 2 * 256 - 1;
   std::size_t nodeCount_ = 0;
