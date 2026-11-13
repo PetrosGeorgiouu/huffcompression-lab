@@ -2084,6 +2084,58 @@ namespace
                 expect(!reader.tryPeekBits(1, value), "Tail read should exhaust physical input");
             } });
 
+        suite.run("word refills preserve inspected but unconsumed bytes", []
+                  {
+            const std::vector<uint8_t> bytes{0x13, 0xA5, 0x67, 0xD1, 0xBE, 0x20,
+                                             0x4F, 0xC3, 0xFF, 0x81, 0xFE, 0xE2,
+                                             0x35, 0x49, 0xBA, 0xFD, 0x96, 0x77,
+                                             0x80, 0x01, 0x55, 0xAA, 0x0D, 0xFE};
+            for (unsigned preserved = 1; preserved <= 7; ++preserved)
+            {
+                auto input = makeBitReaderInput(bytes);
+                BitReader reader{input};
+                std::size_t position = 64 - preserved;
+                expectEqual(reader.readBits(position), fixtureBits(bytes, 0, static_cast<unsigned>(position)),
+                            "Incorrect prefix before a word refill");
+                for (unsigned round = 0; round < 2; ++round)
+                {
+                    uint64_t value{};
+                    expect(reader.tryPeekBits(56, value), "Expected word-refill lookahead");
+                    expectEqual(value, fixtureBits(bytes, position, 56),
+                                "Inspected extra bytes contaminated valid reservoir bits");
+                    reader.consumeBits(56);
+                    position += 56;
+                }
+                while (position < bytes.size() * 8)
+                {
+                    expectEqual(static_cast<uint64_t>(reader.readBit()), fixtureBits(bytes, position, 1),
+                                "Word refill skipped or duplicated an inspected byte");
+                    ++position;
+                }
+                uint64_t value{};
+                expect(!reader.tryPeekBits(1, value), "Word refill fabricated bits past EOF");
+            } });
+
+        suite.run("unaligned full-width reads remain exact after word refills", []
+                  {
+            std::vector<uint8_t> bytes(32);
+            for (std::size_t i = 0; i < bytes.size(); ++i)
+                bytes[i] = static_cast<uint8_t>((i * 97 + 0xB3) & 255);
+            for (unsigned offset = 0; offset < 64; ++offset)
+            {
+                auto input = makeBitReaderInput(bytes);
+                BitReader reader{input};
+                (void)reader.readBits(offset);
+                for (unsigned round = 0; round < 3; ++round)
+                {
+                    expectEqual(reader.readBits(64), fixtureBits(bytes, offset + round * 64, 64),
+                                "Full-width read changed bits at a word-refill alignment");
+                }
+                for (std::size_t position = offset + 192; position < bytes.size() * 8; ++position)
+                    expectEqual(static_cast<uint64_t>(reader.readBit()), fixtureBits(bytes, position, 1),
+                                "Word refill changed the final partial reservoir");
+            } });
+
         suite.printSummary();
         return suite;
     }
