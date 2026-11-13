@@ -2177,12 +2177,8 @@ namespace
         std::istringstream input{output.str(), std::ios::in | std::ios::binary};
         BitReader reader{input};
         HuffmanDecoder decoder{reader};
-        std::string decoded;
-        decoded.reserve(message.size());
-        for (std::size_t i = 0; i < message.size(); ++i)
-        {
-            decoded.push_back(decoder.decodeSymbol());
-        }
+        std::string decoded(message.size(), '\0');
+        decoder.decodeBlock(decoded.data(), decoded.size());
         expectEqual(decoded, message, "Decoded bytes differ from original input");
         expectEqual(reader.readBits(5), uint64_t{0b10101},
                     "Decoder consumed the wrong number of payload bits");
@@ -2210,6 +2206,270 @@ namespace
         writeBalancedDecoderFixture(writer, first + leftLeaves, leaves - leftLeaves);
     }
 
+    std::string blockPayloadBits(const std::string &message)
+    {
+        std::string bits;
+        bits.reserve(message.size() * 3);
+        for (char symbol : message)
+        {
+            switch (symbol)
+            {
+            case 'A': bits += "0"; break;
+            case 'B': bits += "10"; break;
+            case 'C': bits += "110"; break;
+            case 'D': bits += "111"; break;
+            default: throw TestFailure{"Invalid short-code fixture symbol"};
+            }
+        }
+        return bits;
+    }
+
+    std::string balancedBlockTreeBits(unsigned first, unsigned leaves)
+    {
+        if (leaves == 1)
+            return fixtureLeaf(static_cast<uint8_t>(first));
+        const unsigned left = leaves / 2;
+        return "0" + balancedBlockTreeBits(first, left) +
+               balancedBlockTreeBits(first + left, leaves - left);
+    }
+
+    // Independent serialized fixtures and a trailing field detect incorrect
+    // bit consumption; guard bytes detect writes outside the requested span.
+    void expectBlockFixture(const std::string &treeBits,
+                            const std::string &payloadBits,
+                            const std::string &expected)
+    {
+        auto input = makeBitReaderInput(
+            packFixtureBits(treeBits + payloadBits + "1010010111000011"));
+        BitReader reader{input};
+        const HuffmanDecoder decoder{reader};
+        std::vector<char> guarded(expected.size() + 2, '#');
+        decoder.decodeBlock(guarded.data() + 1, expected.size());
+        expectEqual(std::string(guarded.data() + 1, expected.size()), expected,
+                    "Block decoding changed the output bytes");
+        expectEqual(guarded.front(), '#', "Block decoding wrote before the destination");
+        expectEqual(guarded.back(), '#', "Block decoding wrote past the requested count");
+        expectEqual(reader.readBits(16), uint64_t{0xA5C3},
+                    "Block decoding consumed the wrong number of input bits");
+    }
+
+    TestSuite runHuffmanBlockDecodingTests()
+    {
+        TestSuite suite{"Huffman Block Decoder"};
+        std::cout << "\n=== Huffman Block Decoder ===\n";
+
+        suite.run("zero-count blocks accept null and preserve reader and destination", []
+                  {
+            auto input = makeBitReaderInput(packFixtureBits(shortLookupTreeBits() + "1010010111000011"));
+            BitReader reader{input};
+            const HuffmanDecoder decoder{reader};
+            char untouched = '#';
+            decoder.decodeBlock(nullptr, 0);
+            decoder.decodeBlock(&untouched, 0);
+            expectEqual(untouched, '#', "Zero-count block changed output");
+            expectEqual(reader.readBits(16), uint64_t{0xA5C3}, "Zero-count block consumed payload"); });
+
+        suite.run("requested block count protects adjacent output and later symbols", []
+                  {
+            auto input = makeBitReaderInput(packFixtureBits(
+                shortLookupTreeBits() + blockPayloadBits("BADCADAB") + "1010010111000011"));
+            BitReader reader{input};
+            const HuffmanDecoder decoder{reader};
+            std::array<char, 8> output;
+            output.fill('#');
+            decoder.decodeBlock(output.data() + 2, 3);
+            expectEqual(std::string(output.data(), output.size()), std::string{"##BAD###"},
+                        "Block wrote outside the requested destination range");
+            char next{};
+            decoder.decodeBlock(&next, 1);
+            expectEqual(next, 'C', "Block consumed a later symbol");
+            std::array<char, 4> suffix{};
+            decoder.decodeBlock(suffix.data(), suffix.size());
+            expectEqual(std::string(suffix.data(), suffix.size()), std::string{"ADAB"}, "Suffix was lost");
+            expectEqual(reader.readBits(16), uint64_t{0xA5C3}, "Block count lost the sentinel"); });
+
+        suite.run("variable-sized block calls share one continuous bit cursor", []
+                  {
+            std::string message;
+            for (unsigned i = 0; i < 100; ++i) message += "BADCADAB";
+            auto input = makeBitReaderInput(packFixtureBits(
+                shortLookupTreeBits() + blockPayloadBits(message) + "1010010111000011"));
+            BitReader reader{input};
+            const HuffmanDecoder decoder{reader};
+            std::string result;
+            std::size_t position = 0;
+            for (std::size_t requested : {0u, 1u, 2u, 7u, 63u, 64u, 65u, 127u})
+            {
+                std::vector<char> block(requested);
+                decoder.decodeBlock(block.data(), requested);
+                result.append(block.begin(), block.end());
+                position += requested;
+                char next{};
+                decoder.decodeBlock(&next, 1);
+                result += next;
+                ++position;
+                decoder.decodeBlock(nullptr, 0);
+            }
+            std::vector<char> tail(message.size() - position);
+            decoder.decodeBlock(tail.data(), tail.size());
+            result.append(tail.begin(), tail.end());
+            expectEqual(result, message, "Mixed decoding calls skipped or duplicated symbols");
+            expectEqual(reader.readBits(16), uint64_t{0xA5C3}, "Mixed decoding lost the input cursor"); });
+
+        suite.run("one-symbol blocks handle all 1024 lookup prefixes", []
+                  {
+            for (unsigned pattern = 0; pattern < 1024; ++pattern)
+            {
+                std::string payload;
+                for (int shift = 9; shift >= 0; --shift)
+                    payload += ((pattern >> shift) & 1u) ? '1' : '0';
+                const auto bytes = packFixtureBits(shortLookupTreeBits() + payload + "1010010111000011");
+                auto input = makeBitReaderInput(bytes);
+                BitReader reader{input};
+                const HuffmanDecoder decoder{reader};
+                char output{};
+                decoder.decodeBlock(&output, 1);
+                const unsigned width = pattern < 512 ? 1 : pattern < 768 ? 2 : 3;
+                const char expected = pattern < 512 ? 'A' : pattern < 768 ? 'B' : pattern < 896 ? 'C' : 'D';
+                expectEqual(output, expected, "One-symbol block selected the wrong table entry");
+                expectEqual(reader.readBits(10 - width), fixtureBits(bytes, 39 + width, 10 - width),
+                            "One-symbol block consumed unused lookahead");
+                expectEqual(reader.readBits(16), uint64_t{0xA5C3}, "One-symbol block lost the sentinel");
+            } });
+
+        suite.run("blocks alternate ten-bit lookup codes and eleven-bit fallback codes", []
+                  {
+            std::string message, payload;
+            for (unsigned round = 0; round < 30; ++round)
+                for (unsigned symbol : {9u, 10u, 0u, 11u, 1u})
+                {
+                    message += static_cast<char>(symbol);
+                    payload += std::string(symbol, '1') + (symbol == 11 ? "" : "0");
+                }
+            expectBlockFixture(longLookupTreeBits(), payload, message); });
+
+        suite.run("blocks decode correctly at every initial reservoir offset", []
+                  {
+            for (unsigned prefix = 0; prefix < 64; ++prefix)
+            {
+                auto input = makeBitReaderInput(packFixtureBits(std::string(prefix, '1') +
+                    shortLookupTreeBits() + blockPayloadBits("BADCADAB") + "1010010111000011"));
+                BitReader reader{input};
+                (void)reader.readBits(prefix);
+                const HuffmanDecoder decoder{reader};
+                std::array<char, 8> output{};
+                decoder.decodeBlock(output.data(), output.size());
+                expectEqual(std::string(output.data(), output.size()), std::string{"BADCADAB"},
+                            "Block decoding failed at an unaligned tree boundary");
+                expectEqual(reader.readBits(16), uint64_t{0xA5C3}, "Unaligned block consumed the trailing field");
+            } });
+
+        suite.run("blocks decode physical EOF tails shorter than lookup width", []
+                  {
+            const std::string tree = "0" + fixtureLeaf('A') + fixtureLeaf('B');
+            for (unsigned tail = 1; tail < 10; ++tail)
+            {
+                const unsigned prefix = (8 - ((19 + tail) % 8)) % 8;
+                std::string payload, expected;
+                for (unsigned i = 0; i < tail; ++i)
+                {
+                    payload += i % 2 ? '1' : '0';
+                    expected += i % 2 ? 'B' : 'A';
+                }
+                auto input = makeBitReaderInput(packFixtureBits(std::string(prefix, '0') + tree + payload));
+                BitReader reader{input};
+                (void)reader.readBits(prefix);
+                const HuffmanDecoder decoder{reader};
+                std::vector<char> output(tail);
+                decoder.decodeBlock(output.data(), output.size());
+                expectEqual(std::string(output.begin(), output.end()), expected, "Short EOF block failed");
+                char extra{};
+                expectReadError([&] { decoder.decodeBlock(&extra, 1); }, "Block past physical EOF must throw");
+                decoder.decodeBlock(nullptr, 0);
+            } });
+
+        suite.run("truncated long code inside a block throws without writing past the span", []
+                  {
+            // Seven prefix bits align tree(119) + symbol 0(1) + incomplete code(9).
+            auto input = makeBitReaderInput(packFixtureBits(
+                std::string(7, '0') + longLookupTreeBits() + "0" + std::string(9, '1')));
+            BitReader reader{input};
+            (void)reader.readBits(7);
+            const HuffmanDecoder decoder{reader};
+            std::array<char, 4> output{'#', '#', '#', '#'};
+            expectReadError([&] { decoder.decodeBlock(output.data() + 1, 2); },
+                            "Incomplete long code inside a block must throw");
+            expectEqual(output.front(), '#', "Failed block wrote before destination");
+            expectEqual(output.back(), '#', "Failed block wrote past destination"); });
+
+        suite.run("single-symbol blocks preserve null and high-byte symbols and bit counts", []
+                  {
+            for (uint8_t symbol : {uint8_t{0}, uint8_t{0xFF}})
+                expectBlockFixture(fixtureLeaf(symbol), std::string(65537, '0'),
+                                   std::string(65537, static_cast<char>(symbol))); });
+
+        suite.run("single-symbol block rejects an exhausted payload", []
+                  {
+            // A nine-bit leaf plus seven zeros fills exactly two physical bytes.
+            auto input = makeBitReaderInput(packFixtureBits(fixtureLeaf('A') + std::string(7, '0')));
+            BitReader reader{input};
+            const HuffmanDecoder decoder{reader};
+            std::array<char, 8> output{};
+            expectReadError([&] { decoder.decodeBlock(output.data(), output.size()); },
+                            "Single-symbol block must not fabricate a missing bit"); });
+
+        suite.run("single-symbol validation remains active after a complete output block", []
+                  {
+            auto input = makeBitReaderInput(packFixtureBits(
+                fixtureLeaf('A') + std::string(65536, '0') + "1" + std::string(16, '0')));
+            BitReader reader{input};
+            const HuffmanDecoder decoder{reader};
+            std::vector<char> output(65536);
+            decoder.decodeBlock(output.data(), output.size());
+            expectEqual(std::string(output.begin(), output.end()), std::string(65536, 'A'),
+                        "Complete single-symbol output block was corrupted");
+            char next{};
+            expectReadError([&] { decoder.decodeBlock(&next, 1); },
+                            "Invalid bit after a complete block must throw"); });
+
+        suite.run("block fallback supports the maximum 255-bit tree depth", []
+                  {
+            std::string tree, payload, message;
+            for (unsigned symbol = 0; symbol < 255; ++symbol)
+                tree += "0" + fixtureLeaf(static_cast<uint8_t>(symbol));
+            tree += fixtureLeaf(255);
+            for (unsigned symbol = 0; symbol < 256; ++symbol)
+            {
+                message += static_cast<char>(symbol);
+                payload += std::string(symbol, '1') + (symbol == 255 ? "" : "0");
+            }
+            expectBlockFixture(tree, payload, message); });
+
+        suite.run("large block counts span reservoir and input-buffer boundaries", []
+                  {
+            for (std::size_t count : {65535u, 65536u, 65537u, 131073u})
+            {
+                std::string message;
+                message.reserve(count);
+                for (std::size_t i = 0; i < count; ++i) message += "ABCD"[i % 4];
+                expectBlockFixture(shortLookupTreeBits(), blockPayloadBits(message), message);
+            } });
+
+        suite.run("balanced block decoding preserves all 256 byte values", []
+                  {
+            std::string payload, message;
+            for (unsigned i = 0; i < 1025; ++i)
+            {
+                const auto symbol = static_cast<uint8_t>((i * 73 + 19) & 255);
+                message += static_cast<char>(symbol);
+                payload += fixtureByteBits(symbol);
+            }
+            expectBlockFixture(balancedBlockTreeBits(0, 256), payload, message); });
+
+        suite.printSummary();
+        return suite;
+    }
+
     TestSuite runHuffmanDecodingTests()
     {
         TestSuite suite{"Huffman Decoder"};
@@ -2224,11 +2484,10 @@ namespace
             auto input = makeBitReaderInput({0x50, 0x54, 0x2A, 0x1A, 0xD5});
             BitReader reader{input};
             const HuffmanDecoder decoder{reader};
-            for (char expected : std::string{"ABCA"})
-            {
-                expectEqual(decoder.decodeSymbol(), expected,
-                            "Fixed fixture decoded an incorrect symbol");
-            }
+            std::array<char, 4> decoded{};
+            decoder.decodeBlock(decoded.data(), decoded.size());
+            expectEqual(std::string(decoded.data(), decoded.size()), std::string{"ABCA"},
+                        "Fixed fixture decoded incorrect symbols");
             expectEqual(reader.readBits(5), uint64_t{0b10101},
                         "Tree/payload parsing lost the exact bit position"); });
 
@@ -2298,7 +2557,8 @@ namespace
             auto input = makeBitReaderInput({0xA0, 0xE0});
             BitReader reader{input};
             HuffmanDecoder decoder{reader};
-            expectReadError([&] { (void)decoder.decodeSymbol(); },
+            char decoded{};
+            expectReadError([&] { decoder.decodeBlock(&decoded, 1); },
                             "Single-symbol code must be zero"); });
         suite.run("decoder throws when payload is exhausted", []
                   {
@@ -2306,9 +2566,12 @@ namespace
             auto input = makeBitReaderInput({0x50, 0x68, 0x40});
             BitReader reader{input};
             HuffmanDecoder decoder{reader};
-            for (int i = 0; i < 5; ++i)
-                expectEqual(decoder.decodeSymbol(), 'A', "Expected A before EOF");
-            expectReadError([&] { (void)decoder.decodeSymbol(); },
+            std::array<char, 5> decoded{};
+            decoder.decodeBlock(decoded.data(), decoded.size());
+            expectEqual(std::string(decoded.data(), decoded.size()), std::string(5, 'A'),
+                        "Expected five As before EOF");
+            char extra{};
+            expectReadError([&] { decoder.decodeBlock(&extra, 1); },
                             "Reading beyond physical payload should throw"); });
 
         suite.run("balanced 256-symbol tree decodes every byte in both directions", []
@@ -2328,11 +2591,13 @@ namespace
             std::istringstream input{output.str(), std::ios::in | std::ios::binary};
             BitReader reader{input};
             const HuffmanDecoder decoder{reader};
+            std::array<char, 512> decoded{};
+            decoder.decodeBlock(decoded.data(), decoded.size());
             for (unsigned value = 0; value < 256; ++value)
-                expectEqual(static_cast<unsigned char>(decoder.decodeSymbol()),
+                expectEqual(static_cast<unsigned char>(decoded[value]),
                             static_cast<unsigned char>(value), "Forward full-tree traversal failed");
             for (int value = 255; value >= 0; --value)
-                expectEqual(static_cast<unsigned char>(decoder.decodeSymbol()),
+                expectEqual(static_cast<unsigned char>(decoded[511 - value]),
                             static_cast<unsigned char>(value), "Reverse full-tree traversal failed");
             expectEqual(reader.readBits(5), uint64_t{0b10101},
                         "Full-tree decoding consumed the wrong number of bits"); });
@@ -2365,8 +2630,10 @@ namespace
             std::istringstream input{output.str(), std::ios::in | std::ios::binary};
             BitReader reader{input};
             const HuffmanDecoder decoder{reader};
+            std::array<char, 256> decoded{};
+            decoder.decodeBlock(decoded.data(), decoded.size());
             for (unsigned value = 0; value < 256; ++value)
-                expectEqual(static_cast<unsigned char>(decoder.decodeSymbol()),
+                expectEqual(static_cast<unsigned char>(decoded[value]),
                             static_cast<unsigned char>(value), "Deep-path decoding failed");
             expectEqual(reader.readBits(5), uint64_t{0b10101},
                         "Deep-path decoding consumed the wrong number of bits"); });
@@ -2401,7 +2668,9 @@ namespace
                 const HuffmanDecoder decoder{reader};
                 const unsigned width = pattern < 512 ? 1 : pattern < 768 ? 2 : 3;
                 const char symbol = pattern < 512 ? 'A' : pattern < 768 ? 'B' : pattern < 896 ? 'C' : 'D';
-                expectEqual(decoder.decodeSymbol(), symbol,
+                char decoded{};
+                decoder.decodeBlock(&decoded, 1);
+                expectEqual(decoded, symbol,
                             "Incorrect symbol for prefix " + std::to_string(pattern));
                 expectEqual(reader.readBits(10 - width), fixtureBits(bytes, 39 + width, 10 - width),
                             "Lookup consumed bits belonging to later symbols");
@@ -2421,8 +2690,9 @@ namespace
                 for (unsigned bit = 0; bit < offset; ++bit)
                     (void)reader.readBit();
                 const HuffmanDecoder decoder{reader};
-                for (char symbol : message)
-                    expectEqual(decoder.decodeSymbol(), symbol, "Mixed code lengths lost their bit position");
+                std::string decoded(message.size(), '\0');
+                decoder.decodeBlock(decoded.data(), decoded.size());
+                expectEqual(decoded, message, "Mixed code lengths lost their bit position");
                 expectEqual(reader.readBits(16), uint64_t{0xA5C3}, "Decoding consumed the trailing field");
             } });
 
@@ -2436,9 +2706,11 @@ namespace
             auto input = makeBitReaderInput(bytes);
             BitReader reader{input};
             const HuffmanDecoder decoder{reader};
-            for (unsigned symbol : symbols)
-                expectEqual(static_cast<unsigned char>(decoder.decodeSymbol()),
-                            static_cast<unsigned char>(symbol), "Lookup/fallback transition changed a symbol");
+            std::vector<char> decoded(symbols.size());
+            decoder.decodeBlock(decoded.data(), decoded.size());
+            for (std::size_t i = 0; i < symbols.size(); ++i)
+                expectEqual(static_cast<unsigned char>(decoded[i]),
+                            static_cast<unsigned char>(symbols[i]), "Lookup/fallback transition changed a symbol");
             expectEqual(reader.readBits(16), uint64_t{0xA5C3}, "Fallback consumed the wrong code length"); });
 
         suite.run("failed lookahead still decodes every physical tail length below ten bits", []
@@ -2459,10 +2731,13 @@ namespace
                 const HuffmanDecoder decoder{reader};
                 uint64_t lookahead{};
                 expect(!reader.tryPeekBits(10, lookahead), "Tail fixture unexpectedly has ten bits");
+                std::vector<char> decoded(tail);
+                decoder.decodeBlock(decoded.data(), decoded.size());
                 for (unsigned bit = 0; bit < tail; ++bit)
-                    expectEqual(decoder.decodeSymbol(), bit % 2 ? 'B' : 'A',
+                    expectEqual(decoded[bit], bit % 2 ? 'B' : 'A',
                                 "Failed peek lost a valid short code at EOF");
-                expectReadError([&] { (void)decoder.decodeSymbol(); }, "Exhausted tail must throw");
+                char extra{};
+                expectReadError([&] { decoder.decodeBlock(&extra, 1); }, "Exhausted tail must throw");
             } });
 
         suite.run("truncated long code is rejected without treating absent bits as zero", []
@@ -2473,7 +2748,8 @@ namespace
             auto input = makeBitReaderInput(bytes);
             BitReader reader{input};
             const HuffmanDecoder decoder{reader};
-            expectReadError([&] { (void)decoder.decodeSymbol(); }, "Truncated long code must throw"); });
+            char decoded{};
+            expectReadError([&] { decoder.decodeBlock(&decoded, 1); }, "Truncated long code must throw"); });
 
         suite.run("single-symbol zero codes retain validation with ample lookahead", []
                   {
@@ -2483,9 +2759,12 @@ namespace
             auto input = makeBitReaderInput(bytes);
             BitReader reader{input};
             const HuffmanDecoder decoder{reader};
-            for (unsigned i = 0; i < 65; ++i)
-                expectEqual(decoder.decodeSymbol(), '\0', "Single-symbol code consumed the wrong bit");
-            expectReadError([&] { (void)decoder.decodeSymbol(); }, "Single-symbol validation must stay active"); });
+            std::array<char, 65> decoded{};
+            decoder.decodeBlock(decoded.data(), decoded.size());
+            expectEqual(std::string(decoded.data(), decoded.size()), std::string(65, '\0'),
+                        "Single-symbol code consumed the wrong bit");
+            char extra{};
+            expectReadError([&] { decoder.decodeBlock(&extra, 1); }, "Single-symbol validation must stay active"); });
 
         suite.run("lookup decoding spans multiple 64 KiB input blocks", []
                   {
@@ -2499,9 +2778,13 @@ namespace
             auto input = makeBitReaderInput(bytes);
             BitReader reader{input};
             const HuffmanDecoder decoder{reader};
+            std::array<char, 8> decoded{};
             for (unsigned i = 0; i < repetitions; ++i)
-                for (char symbol : message)
-                    expectEqual(decoder.decodeSymbol(), symbol, "Input block refill changed a decoded symbol");
+            {
+                decoder.decodeBlock(decoded.data(), decoded.size());
+                expectEqual(std::string(decoded.data(), decoded.size()), message,
+                            "Input block refill changed decoded symbols");
+            }
             expectEqual(reader.readBits(16), uint64_t{0xA5C3}, "Cross-block decoding consumed the sentinel"); });
 
         suite.printSummary();
@@ -2625,6 +2908,25 @@ namespace
                         "Decompression should reject " + name);
     }
 
+    void expectIndependentBlockFile(const std::string &name,
+                                    const std::string &treeBits,
+                                    const std::string &payloadBits,
+                                    const std::string &expected)
+    {
+        const auto input = TEST_OUTPUT_DIRECTORY / (name + ".huff");
+        const auto output = TEST_OUTPUT_DIRECTORY / (name + ".restored");
+        // A nonzero trailing field detects over-decoding beyond the header count.
+        writeTestFile(input, makeDecompressionFixture(expected.size(),
+            packFixtureBits(treeBits + payloadBits + "1010010111000011")));
+        writeTestFile(output, std::string(expected.size() + 100, 'X'));
+        decompressor(input.string(), output.string());
+        const auto bytes = readFileBytes(output);
+        expectEqual(std::string(bytes.begin(), bytes.end()), expected,
+                    "Block file decoding changed bytes or left a stale output tail");
+        expectEqual(fs::file_size(output), static_cast<std::uintmax_t>(expected.size()),
+                    "Block file output size differs from the header count");
+    }
+
     TestSuite runDecompressorTests()
     {
         TestSuite suite{"Decompressor"};
@@ -2726,6 +3028,64 @@ namespace
             expectReadError([&] { decompressor(input.string(), TEST_OUTPUT_DIRECTORY.string()); },
                             "Opening a directory for output should throw"); });
 
+        suite.run("independent fixtures end below at and above 64 KiB output boundaries", []
+                  {
+            for (std::size_t size : {1u, 65535u, 65536u, 65537u, 131071u, 131072u, 131073u})
+            {
+                std::string expected;
+                expected.reserve(size);
+                for (std::size_t i = 0; i < size; ++i) expected += "ABCD"[i % 4];
+                expectIndependentBlockFile("decompress_block_" + std::to_string(size),
+                    shortLookupTreeBits(), blockPayloadBits(expected), expected);
+            } });
+
+        suite.run("independent single-symbol files span multiple output blocks", []
+                  {
+            for (uint8_t symbol : {uint8_t{0}, uint8_t{0xFF}})
+                expectIndependentBlockFile("decompress_block_single_" + std::to_string(symbol),
+                    fixtureLeaf(symbol), std::string(131073, '0'),
+                    std::string(131073, static_cast<char>(symbol))); });
+
+        suite.run("independent binary fixture preserves all bytes in a partial second block", []
+                  {
+            std::string expected, payload;
+            expected.reserve(65537);
+            payload.reserve(65537 * 8);
+            for (unsigned i = 0; i < 65537; ++i)
+            {
+                const auto symbol = static_cast<uint8_t>((i * 73 + 19) & 255);
+                expected += static_cast<char>(symbol);
+                payload += fixtureByteBits(symbol);
+            }
+            expectIndependentBlockFile("decompress_block_binary", balancedBlockTreeBits(0, 256),
+                                       payload, expected); });
+
+        suite.run("independent lookup and long-code fallback cross output block boundaries", []
+                  {
+            std::string expected, payload;
+            for (unsigned i = 0; i < 65537; ++i)
+            {
+                const unsigned symbol = i % 12;
+                expected += static_cast<char>(symbol);
+                payload += std::string(symbol, '1') + (symbol == 11 ? "" : "0");
+            }
+            expectIndependentBlockFile("decompress_block_long", longLookupTreeBits(), payload, expected); });
+
+        suite.run("payload exhausted after one complete output block is rejected", []
+                  {
+            // Tree(39) + B(2) + 65535 As(65535) is byte aligned: no padding
+            // can masquerade as the missing 65537th output symbol.
+            const std::string bits = shortLookupTreeBits() + "10" + std::string(65535, '0');
+            expectEqual(bits.size() % 8, std::size_t{0}, "Truncation fixture must be byte aligned");
+            expectDecompressionFailure("decompress_block_truncated_second",
+                makeDecompressionFixture(65537, packFixtureBits(bits))); });
+
+        suite.run("invalid single-symbol bit in a later output block is rejected", []
+                  {
+            expectDecompressionFailure("decompress_block_invalid_second",
+                makeDecompressionFixture(65537, packFixtureBits(fixtureLeaf('A') +
+                    std::string(65536, '0') + "1" + std::string(16, '0')))); });
+
         suite.printSummary();
         return suite;
     }
@@ -2778,6 +3138,9 @@ int main()
     const TestSuite decodingSuite{
         runHuffmanDecodingTests()};
 
+    const TestSuite blockDecodingSuite{
+        runHuffmanBlockDecodingTests()};
+
     const TestSuite compressorSuite{
         runCompressorTests()};
 
@@ -2792,6 +3155,7 @@ int main()
         bitWriterSuite.passed() +
         bitReaderSuite.passed() +
         decodingSuite.passed() +
+        blockDecodingSuite.passed() +
         compressorSuite.passed() +
         decompressorSuite.passed()};
 
@@ -2803,6 +3167,7 @@ int main()
         bitWriterSuite.total() +
         bitReaderSuite.total() +
         decodingSuite.total() +
+        blockDecodingSuite.total() +
         compressorSuite.total() +
         decompressorSuite.total()};
 

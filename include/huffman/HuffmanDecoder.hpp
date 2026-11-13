@@ -11,7 +11,8 @@ class HuffmanDecoder
 {
 public:
   explicit HuffmanDecoder(BitReader &reader);
-  char decodeSymbol() const;
+
+  void decodeBlock(char* output, std::size_t count) const;
   ~HuffmanDecoder();
 
   HuffmanDecoder(const HuffmanDecoder &) = delete;

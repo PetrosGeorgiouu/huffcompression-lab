@@ -77,40 +77,75 @@ void HuffmanDecoder::buildLookupTable() {
   }
 }
 
-char HuffmanDecoder::decodeSymbol() const
+void HuffmanDecoder::decodeBlock(
+    char* output,
+    std::size_t count) const
 {
-  if (!root)
+  if (count == 0)
+  {
+    return;
+  }
+
+  const Node* rootNode = root.get();
+
+  if (!rootNode)
   {
     throw std::runtime_error("Can't decode an empty tree");
   }
-  const Node *current = root.get();
-  if (current->isLeaf())
-  {
-    if (reader_.readBit() != 0)
-    {
-      throw std::runtime_error("Invalid bit for single symbol tree.");
-    }
-    return current->symbol;
-  }
-  uint64_t pattern;
-  if (reader_.tryPeekBits(LOOKUP_BITS, pattern))
-  {
-    const Entry &entry = table_[pattern];
-    if (entry.bitsConsumed != 0)
-    {
-      reader_.consumeBits(entry.bitsConsumed);
-      return entry.symbol;
-    }
-  }
-  while (!current->isLeaf())
-  {
-    const uint8_t bit = reader_.readBit();
-    current = bit == 0 ? current->left.get() : current->right.get();
 
-    if (!current)
+  // Select single-symbol handling once for the entire block.
+  if (rootNode->isLeaf())
+  {
+    const char symbol = rootNode->symbol;
+
+    for (std::size_t i = 0; i < count; ++i)
     {
-      throw std::runtime_error("Invalid Huffman path.");
+      if (reader_.readBit() != 0)
+      {
+        throw std::runtime_error(
+            "Invalid bit for single symbol tree.");
+      }
+
+      output[i] = symbol;
     }
+
+    return;
   }
-  return current->symbol;
+
+  for (std::size_t i = 0; i < count; ++i)
+  {
+    uint64_t pattern;
+
+    // Fast path: decode using the lookup table.
+    if (reader_.tryPeekBits(LOOKUP_BITS, pattern))
+    {
+      const Entry& entry = table_[pattern];
+
+      if (entry.bitsConsumed != 0)
+      {
+        reader_.consumeBits(entry.bitsConsumed);
+        output[i] = entry.symbol;
+        continue;
+      }
+    }
+
+    // Fallback: long code or insufficient lookahead.
+    const Node* current = rootNode;
+
+    while (!current->isLeaf())
+    {
+      const uint8_t bit = reader_.readBit();
+
+      current = bit == 0
+          ? current->left.get()
+          : current->right.get();
+
+      if (!current)
+      {
+        throw std::runtime_error("Invalid Huffman path.");
+      }
+    }
+
+    output[i] = current->symbol;
+  }
 }

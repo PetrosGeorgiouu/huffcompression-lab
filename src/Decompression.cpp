@@ -1,3 +1,6 @@
+#include <algorithm>
+#include <array>
+#include <cstddef>
 #include <istream>
 #include <ostream>
 #include <fstream>
@@ -6,9 +9,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
-#include <array>
 #include "huffman/BitReader.hpp"
-#include "huffman/HuffmanDecoder.hpp"
 #include "huffman/HuffmanDecoder.hpp"
 
 namespace fs = std::filesystem;
@@ -62,25 +63,27 @@ void decompressor(const std::string &inputPath, const std::string &outputPath)
 
     BitReader reader(file);
     HuffmanDecoder tree(reader);
-    std::array<char, 64 * 1024> buffer;
-    std::size_t used = 0;
 
-    for (uint64_t i = 0; i < original_size; ++i)
+    std::array<char, 64 * 1024> outputBuffer;
+    uint64_t remaining = original_size;
+
+    while (remaining != 0)
     {
-        buffer[used++] = static_cast<char>(tree.decodeSymbol());
+        const std::size_t count = static_cast<std::size_t>(
+            std::min<uint64_t>(remaining, outputBuffer.size()));
 
-        if (used == buffer.size())
+        tree.decodeBlock(outputBuffer.data(), count);
+        outputFile.write(outputBuffer.data(),
+                         static_cast<std::streamsize>(count));
+
+        if (!outputFile)
         {
-            outputFile.write(buffer.data(),
-                         static_cast<std::streamsize>(used));
-            used = 0;
+            throw runtime_error("Failed to write decompressed output");
         }
+
+        remaining -= count;
     }
-    if (used != 0)
-    {
-        outputFile.write(buffer.data(),
-                     static_cast<std::streamsize>(used));
-    }
+
     outputFile.flush();
     if (!outputFile)
     {
