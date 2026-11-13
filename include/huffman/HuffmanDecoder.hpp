@@ -19,10 +19,14 @@ public:
 
 private:
   struct Node;
-  struct Entry {
-  char symbol = '\0';
-  uint64_t bitsConsumed = 0;
-};
+  struct Entry
+  {
+    char symbol = '\0';
+    uint8_t bitsConsumed = 0;
+  };
+
+static_assert(sizeof(Entry) == 2,
+              "Expected a two-byte lookup entry");
 
   static constexpr std::size_t LOOKUP_BITS = 10;
   static constexpr std::size_t TABLE_SIZE = std::size_t{1} << LOOKUP_BITS; 
