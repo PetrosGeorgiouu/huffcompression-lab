@@ -101,10 +101,6 @@ bool BitReader::tryPeekBits(unsigned size, uint64_t& value) {
     return true;
 }
 
-void BitReader::consumeBits(unsigned size) {
-    assert(size <= valid_bits - current_position);
-    current_position += size;
-}
 
 uint8_t BitReader::readByte()
 {

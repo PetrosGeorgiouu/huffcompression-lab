@@ -229,20 +229,20 @@ Below are the baseline timed results for the initial decompression implementatio
 We use this to measure the results of statistics based on the most recent change made. I'll include what we changed most recently also.
 
 - **October 31, 2026:** Replaced per-byte `ostream::put()` calls with a 64 KiB output buffer. Decoded bytes accumulate in an array and are written using `ostream::write()` when the buffer fills, with any remaining bytes written after decoding. 
-- **November 13, 2026:** Replaced bit-by-bit Huffman tree traversal for codes up to 10 bits long with a 1,024-entry lookup table. Each entry stores the decoded symbol and the number of bits to consume. The bit reader peeks at upcoming bits without consuming them, then advances by the matched code’s length. Longer codes and insufficient lookahead near EOF fall back to tree traversal. Updated refill logic preserves unread bits across buffer boundaries.
+- **November 13, 2026:** Replaced bit-by-bit Huffman tree traversal for codes up to 10 bits long with a 1,024-entry lookup table. Each entry stores the decoded symbol and the number of bits to consume. The bit reader peeks at upcoming bits without consuming them, then advances by the matched code’s length. Longer codes and insufficient lookahead near EOF fall back to tree traversal. Updated refill logic preserves unread bits across buffer boundaries. Moved `consumeBits()` into header to improve inlining.
 
 | Metric                    |           Result |
 | ------------------------- | ---------------: |
-| Median wall-clock latency |   **164.400 ms** |
-| Mean wall-clock latency   |   **164.799 ms** |
-| Best observed latency     |   **162.244 ms** |
-| Standard deviation        |     **1.961 ms** |
-| Coefficient of variation  |        **1.19%** |
-| Median CPU time           |   **162.242 ms** |
-| Mean CPU time             |   **162.661 ms** |
-| Median throughput         | **49.7573 MiB/s** |
-| Mean throughput           | **49.6435 MiB/s** |
-| Peak observed throughput  | **50.4185 MiB/s** |
+| Median wall-clock latency |   **161.774 ms** |
+| Mean wall-clock latency   |   **162.449 ms** |
+| Best observed latency     |   **160.228 ms** |
+| Standard deviation        |     **2.116 ms** |
+| Coefficient of variation  |        **1.30%** |
+| Median CPU time           |   **159.714 ms** |
+| Mean CPU time             |   **160.460 ms** |
+| Median throughput         | **50.5651 MiB/s** |
+| Mean throughput           | **50.3630 MiB/s** |
+| Peak observed throughput  | **51.0530 MiB/s** |
 
 ## Acknowledgments
 
