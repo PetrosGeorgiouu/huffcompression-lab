@@ -1,6 +1,7 @@
 #pragma once
-#include <istream>
 
-using namespace std;
+#include <string>
 
-void decompressor(const std::string &inputPath, const std::string &outputPath);
+void decompressor(
+    const std::string &inputPath,
+    const std::string &outputPath);

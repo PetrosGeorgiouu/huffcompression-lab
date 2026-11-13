@@ -16,8 +16,9 @@
 
 static void BM_DecompressFile(benchmark::State &state)
 {
-  const std::string inputPath =
-      "data/corpus/complete_project_gutenberg_works_of_george_meredith.huff";
+  // Frozen input used for the recorded performance comparisons.
+    const std::string inputPath =
+        "data/benchmarks/meredith_legacy.huff";
 
   const std::string outputPath =
       "build/benchmark_output.txt";

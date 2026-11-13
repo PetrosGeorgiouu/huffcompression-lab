@@ -4,6 +4,4 @@
 #include <string>
 #include <array>
 
-using namespace std;
-
-array <uint64_t, 256> findFrequencies(const string &txtPath);
+std::array <uint64_t, 256> findFrequencies(const std::string &txtPath);

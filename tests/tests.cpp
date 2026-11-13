@@ -900,6 +900,20 @@ namespace
             "Expected two newline characters"
         ); });
 
+        suite.run("missing frequency input is rejected", []
+                  {
+            const auto input = TEST_OUTPUT_DIRECTORY / "frequency_missing_input.txt";
+            fs::remove(input);
+            expectQueueException<std::runtime_error>(
+                [&] { (void)findFrequencies(input.string()); },
+                "A missing frequency input must not produce an empty table"); });
+
+        suite.run("frequency input read failures are rejected", []
+                  {
+            expectQueueException<std::runtime_error>(
+                [&] { (void)findFrequencies(TEST_OUTPUT_DIRECTORY.string()); },
+                "An unreadable directory must not produce an empty frequency table"); });
+
         suite.printSummary();
         return suite;
     }
@@ -1343,33 +1357,21 @@ namespace
 
         suite.run("writeBits crosses the output-buffer boundary", []
                   {
-        const auto bytes{
-            writeWithBitWriter(
-                "bitwriter_write_bits_buffer_boundary",
-                [](BitWriter &writer)
-                {
-                    for (std::size_t i{0}; i < 4097; ++i)
+            for (std::size_t size : {65535u, 65536u, 65537u})
+            {
+                const auto bytes = writeWithBitWriter(
+                    "bitwriter_buffer_boundary_" + std::to_string(size),
+                    [size](BitWriter &writer)
                     {
-                        writer.writeBits(0xA5, 8);
-                    }
-                }
-            )
-        };
-
-        expectEqual(
-            bytes.size(),
-            std::size_t{4097},
-            "Expected every byte on both sides of the buffer flush"
-        );
-
-        for (uint8_t byte : bytes)
-        {
-            expectEqual(
-                byte,
-                uint8_t{0xA5},
-                "A byte was corrupted while crossing the buffer boundary"
-            );
-        } });
+                        for (std::size_t i = 0; i < size; ++i)
+                            writer.writeBits(0xA5, 8);
+                    });
+                expectEqual(bytes.size(), size,
+                            "Incorrect output size around the buffer boundary");
+                expect(std::all_of(bytes.begin(), bytes.end(),
+                                  [](std::uint8_t byte) { return byte == 0xA5; }),
+                       "Output bytes were corrupted around the buffer boundary");
+            } });
 
         suite.run("aligned writeByte writes the byte unchanged", []
                   {
@@ -1564,6 +1566,28 @@ namespace
         for (unsigned symbol = 0; symbol < 11; ++symbol)
             bits += "0" + fixtureLeaf(static_cast<uint8_t>(symbol));
         return bits + fixtureLeaf(11);
+    }
+
+    template <typename Function>
+    void expectRuntimeErrorContaining(Function &&function,
+                                     const std::string &expectedText,
+                                     const std::string &message)
+    {
+        try
+        {
+            function();
+        }
+        catch (const TestFailure &)
+        {
+            throw;
+        }
+        catch (const std::runtime_error &error)
+        {
+            expect(std::string(error.what()).find(expectedText) != std::string::npos,
+                   message + ": unexpected exception: " + error.what());
+            return;
+        }
+        throw TestFailure{message};
     }
 
     TestSuite runBitReaderTests()
@@ -2863,6 +2887,109 @@ namespace
             static_cast<uint64_t>(contents.size())
         ); });
 
+        suite.run("missing input fails without creating or truncating output", []
+                  {
+            const auto input = TEST_OUTPUT_DIRECTORY / "compress_missing_input.txt";
+            const auto output = TEST_OUTPUT_DIRECTORY / "compress_missing_input.huff";
+            fs::remove(input);
+            fs::remove(output);
+            expectReadError([&] { compressor(input.string(), output.string()); },
+                            "Missing compression input must throw");
+            expect(!fs::exists(output), "Missing input should not create an empty archive");
+            writeTestFile(output, "existing output must survive");
+            const auto before = readFileBytes(output);
+            expectReadError([&] { compressor(input.string(), output.string()); },
+                            "Missing input must also fail when output already exists");
+            expectEqual(readFileBytes(output), before, "Missing input truncated an existing output"); });
+
+        suite.run("directory input fails before truncating output", []
+                  {
+            const auto output = TEST_OUTPUT_DIRECTORY / "compress_directory_input.huff";
+            writeTestFile(output, "existing output must survive");
+            const auto before = readFileBytes(output);
+            expectReadError([&] { compressor(TEST_OUTPUT_DIRECTORY.string(), output.string()); },
+                            "Directory input must fail instead of being encoded as empty");
+            expectEqual(readFileBytes(output), before, "Failed frequency scan truncated output"); });
+
+        suite.run("identical compression paths are rejected without changing input", []
+                  {
+            const auto input = TEST_OUTPUT_DIRECTORY / "compress_same_path.txt";
+            writeTestFile(input, "BANANA BANDANA\n");
+            const auto before = readFileBytes(input);
+            expectReadError([&] { compressor(input.string(), input.string()); },
+                            "Identical compression paths must be rejected");
+            expectEqual(readFileBytes(input), before, "Same-path compression destroyed input"); });
+
+        suite.run("lexically different paths to the same input are rejected", []
+                  {
+            const auto input = TEST_OUTPUT_DIRECTORY / "compress_dot_alias.txt";
+            const auto alias = TEST_OUTPUT_DIRECTORY / "." / input.filename();
+            writeTestFile(input, "input must survive a dot-path alias");
+            const auto before = readFileBytes(input);
+            expectReadError([&] { compressor(input.string(), alias.string()); },
+                            "Path spelling differences must not bypass same-file checks");
+            expectEqual(readFileBytes(input), before, "Dot-path alias compression changed input"); });
+
+        suite.run("hard-link output aliases are rejected without changing either name", []
+                  {
+            const auto input = TEST_OUTPUT_DIRECTORY / "compress_hardlink_input.txt";
+            const auto alias = TEST_OUTPUT_DIRECTORY / "compress_hardlink_output.huff";
+            fs::remove(alias);
+            writeTestFile(input, "input must survive a hard-link alias");
+            fs::create_hard_link(input, alias);
+            const auto before = readFileBytes(input);
+            expectReadError([&] { compressor(input.string(), alias.string()); },
+                            "Hard-link aliases must be recognized as the same file");
+            expectEqual(readFileBytes(input), before, "Hard-link output destroyed input");
+            expectEqual(readFileBytes(alias), before, "Hard-link alias contents changed"); });
+
+        suite.run("symbolic-link output aliases are rejected without changing input", []
+                  {
+            const auto input = TEST_OUTPUT_DIRECTORY / "compress_symlink_input.txt";
+            const auto alias = TEST_OUTPUT_DIRECTORY / "compress_symlink_output.huff";
+            fs::remove(alias);
+            writeTestFile(input, "input must survive a symbolic-link alias");
+            fs::create_symlink(input.filename(), alias);
+            const auto before = readFileBytes(input);
+            expectReadError([&] { compressor(input.string(), alias.string()); },
+                            "Symbolic-link aliases must be recognized as the same file");
+            expectEqual(readFileBytes(input), before, "Symbolic-link output destroyed input");
+            expectEqual(readFileBytes(alias), before, "Symbolic-link target contents changed"); });
+
+        suite.run("a distinct existing output can still be overwritten", []
+                  {
+            const auto input = TEST_OUTPUT_DIRECTORY / "compress_overwrite_input.txt";
+            const auto output = TEST_OUTPUT_DIRECTORY / "compress_overwrite_output.huff";
+            writeTestFile(input, "abb");
+            writeTestFile(output, std::string(100, 'X'));
+            const auto before = readFileBytes(input);
+            compressor(input.string(), output.string());
+            const auto bytes = readFileBytes(output);
+            expectCompressionHeader(bytes, 3);
+            expectEqual(bytes.size(), std::size_t{16}, "Overwrite left stale archive bytes");
+            expectEqual(readFileBytes(input), before, "Overwriting a distinct output changed input"); });
+
+        suite.run("directory output is rejected without changing input", []
+                  {
+            const auto input = TEST_OUTPUT_DIRECTORY / "compress_directory_output.txt";
+            writeTestFile(input, "input must survive an invalid output path");
+            const auto before = readFileBytes(input);
+            expectReadError([&] { compressor(input.string(), TEST_OUTPUT_DIRECTORY.string()); },
+                            "A directory cannot be used as compression output");
+            expectEqual(readFileBytes(input), before, "Invalid output changed the compression input"); });
+
+        if (fs::exists("/dev/full"))
+        {
+            suite.run("compression reports output write failures", []
+                      {
+                const auto input = TEST_OUTPUT_DIRECTORY / "compress_write_failure.txt";
+                writeTestFile(input, std::string(10000, 'A'));
+                expectRuntimeErrorContaining(
+                    [&] { compressor(input.string(), "/dev/full"); },
+                    "Failed while writing",
+                    "Compression must report a failed output write"); });
+        }
+
         suite.printSummary();
         return suite;
     }
@@ -3085,6 +3212,109 @@ namespace
             expectDecompressionFailure("decompress_block_invalid_second",
                 makeDecompressionFixture(65537, packFixtureBits(fixtureLeaf('A') +
                     std::string(65536, '0') + "1" + std::string(16, '0')))); });
+
+        suite.run("missing decompression input preserves existing output", []
+                  {
+            const auto input = TEST_OUTPUT_DIRECTORY / "decompress_missing_preserve.huff";
+            const auto output = TEST_OUTPUT_DIRECTORY / "decompress_missing_preserve.restored";
+            fs::remove(input);
+            fs::remove(output);
+            expectReadError([&] { decompressor(input.string(), output.string()); },
+                            "Missing input must be rejected before creating output");
+            expect(!fs::exists(output), "Missing input created an output file");
+            writeTestFile(output, "existing destination must survive");
+            const auto before = readFileBytes(output);
+            expectReadError([&] { decompressor(input.string(), output.string()); },
+                            "Missing input must be rejected before truncating output");
+            expectEqual(readFileBytes(output), before, "Missing input truncated existing output"); });
+
+        suite.run("directory decompression input preserves existing output", []
+                  {
+            const auto output = TEST_OUTPUT_DIRECTORY / "decompress_directory_preserve.restored";
+            writeTestFile(output, "existing destination must survive");
+            const auto before = readFileBytes(output);
+            expectReadError([&] { decompressor(TEST_OUTPUT_DIRECTORY.string(), output.string()); },
+                            "A directory cannot be decoded as an archive");
+            expectEqual(readFileBytes(output), before, "Directory input truncated existing output"); });
+
+        suite.run("identical decompression paths preserve the original archive", []
+                  {
+            const auto input = TEST_OUTPUT_DIRECTORY / "decompress_same_path.huff";
+            writeTestFile(input, makeDecompressionFixture(3, {0x58, 0x6C, 0x4C}));
+            const auto before = readFileBytes(input);
+            expectReadError([&] { decompressor(input.string(), input.string()); },
+                            "An archive cannot also be its decompressed output");
+            expectEqual(readFileBytes(input), before, "Same-path decompression destroyed the archive"); });
+
+        suite.run("decompression rejects differently spelled paths to the same archive", []
+                  {
+            const auto input = TEST_OUTPUT_DIRECTORY / "decompress_dot_alias.huff";
+            const auto alias = TEST_OUTPUT_DIRECTORY / "." / input.filename();
+            writeTestFile(input, makeDecompressionFixture(3, {0x58, 0x6C, 0x4C}));
+            const auto before = readFileBytes(input);
+            expectReadError([&] { decompressor(input.string(), alias.string()); },
+                            "Dot-path aliases must be rejected");
+            expectEqual(readFileBytes(input), before, "Dot-path output changed the archive"); });
+
+        suite.run("decompression rejects hard-link aliases and preserves archive bytes", []
+                  {
+            const auto input = TEST_OUTPUT_DIRECTORY / "decompress_hardlink_input.huff";
+            const auto alias = TEST_OUTPUT_DIRECTORY / "decompress_hardlink_output.restored";
+            fs::remove(alias);
+            writeTestFile(input, makeDecompressionFixture(3, {0x58, 0x6C, 0x4C}));
+            fs::create_hard_link(input, alias);
+            const auto before = readFileBytes(input);
+            expectReadError([&] { decompressor(input.string(), alias.string()); },
+                            "Hard-link output aliases must be rejected");
+            expectEqual(readFileBytes(input), before, "Hard-link output destroyed the archive");
+            expectEqual(readFileBytes(alias), before, "Hard-link contents changed"); });
+
+        suite.run("decompression rejects symbolic-link aliases and preserves archive bytes", []
+                  {
+            const auto input = TEST_OUTPUT_DIRECTORY / "decompress_symlink_input.huff";
+            const auto alias = TEST_OUTPUT_DIRECTORY / "decompress_symlink_output.restored";
+            fs::remove(alias);
+            writeTestFile(input, makeDecompressionFixture(3, {0x58, 0x6C, 0x4C}));
+            fs::create_symlink(input.filename(), alias);
+            const auto before = readFileBytes(input);
+            expectReadError([&] { decompressor(input.string(), alias.string()); },
+                            "Symbolic-link output aliases must be rejected");
+            expectEqual(readFileBytes(input), before, "Symbolic-link output destroyed the archive");
+            expectEqual(readFileBytes(alias), before, "Symbolic-link target contents changed"); });
+
+        suite.run("invalid fixed headers preserve an existing destination", []
+                  {
+            const auto input = TEST_OUTPUT_DIRECTORY / "decompress_bad_header_preserve.huff";
+            const auto output = TEST_OUTPUT_DIRECTORY / "decompress_bad_header_preserve.restored";
+            auto badMagic = makeDecompressionFixture(0);
+            badMagic[0] = '?';
+            auto badVersion = makeDecompressionFixture(0);
+            badVersion[4] = '\2';
+            const auto truncatedSize = makeDecompressionFixture(0).substr(0, 12);
+            for (const auto &bytes : std::vector<std::string>{"", badMagic, badVersion, truncatedSize})
+            {
+                writeTestFile(input, bytes);
+                writeTestFile(output, "existing destination must survive");
+                const auto before = readFileBytes(output);
+                expectReadError([&] { decompressor(input.string(), output.string()); },
+                                "Invalid fixed header must throw");
+                expectEqual(readFileBytes(output), before, "Invalid header truncated existing output");
+            } });
+
+        // /dev/full is a deterministic ENOSPC device on Linux. Register this
+        // test only when available, so other supported platforms can run too.
+        if (fs::exists("/dev/full"))
+        {
+            suite.run("decompression reports output write failures", []
+                      {
+                const auto input = TEST_OUTPUT_DIRECTORY / "decompress_write_failure.huff";
+                writeTestFile(input, makeDecompressionFixture(16384,
+                    packFixtureBits(fixtureLeaf('A') + std::string(16384, '0'))));
+                expectRuntimeErrorContaining(
+                    [&] { decompressor(input.string(), "/dev/full"); },
+                    "Failed to write decompressed output",
+                    "Decompression must report a failed output write"); });
+        }
 
         suite.printSummary();
         return suite;

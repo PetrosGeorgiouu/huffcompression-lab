@@ -1,6 +1,5 @@
 CXX := clang++
 
-# Optimized build settings for compression and decompression benchmarks.
 CXXFLAGS := -std=c++17 \
             -O2 \
             -g \
@@ -17,7 +16,7 @@ SOURCES := src/FrequencyTable.cpp \
            src/Compression.cpp \
            src/BitWriter.cpp \
            src/BitReader.cpp \
-					 src/Decompression.cpp
+           src/Decompression.cpp
 
 HEADERS := include/huffman/FrequencyTable.hpp \
            include/huffman/HuffmanTree.hpp \
@@ -25,7 +24,8 @@ HEADERS := include/huffman/FrequencyTable.hpp \
            include/huffman/Compression.hpp \
            include/huffman/BitWriter.hpp \
            include/huffman/BitReader.hpp \
-					 include/huffman/Decompression.hpp
+           include/huffman/Decompression.hpp \
+           include/huffman/UniquePtrPriorityQueue.hpp
 
 TESTS := tests/tests.cpp
 
@@ -33,13 +33,15 @@ INPUT ?=
 OUTPUT ?=
 CORPUS_DIR ?= data/corpus
 
-# Linux perf recordings and reports stay with other generated build artifacts.
 PERF_ARGS ?= -g
 PERF_DATA := build/perf.compression.data
 DEHUFF_PERF_DATA := build/perf.decompression.data
+
 BENCH_CPU ?= 2
+
 BENCH_ARGS ?= --benchmark_filter='BM_CompressFile.*' \
               --benchmark_repetitions=30
+
 DEHUFF_BENCH_ARGS ?= --benchmark_filter='BM_DecompressFile.*' \
                      --benchmark_repetitions=30
 
@@ -52,42 +54,39 @@ BENCHMARK_INCLUDE := $(HOME)/benchmark/include
 BENCHMARK_LIB := $(HOME)/benchmark/build-release/src/libbenchmark.a
 endif
 
-build/huff: apps/huff.cpp $(SOURCES) $(HEADERS)
+build/huff: apps/huff.cpp $(SOURCES) $(HEADERS) Makefile
 	mkdir -p build
 	$(CXX) $(CXXFLAGS) apps/huff.cpp $(SOURCES) \
 		-o build/huff
 
-build/dehuff: apps/dehuff.cpp $(SOURCES) $(HEADERS)
+build/dehuff: apps/dehuff.cpp $(SOURCES) $(HEADERS) Makefile
 	mkdir -p build
 	$(CXX) $(CXXFLAGS) apps/dehuff.cpp $(SOURCES) \
-		-o build/dehuff		
+		-o build/dehuff
 
-
-build/huff_profiler: benchmarks/huff_profiler.cpp $(SOURCES) $(HEADERS)
+build/huff_profiler: benchmarks/huff_profiler.cpp $(SOURCES) $(HEADERS) Makefile
 	mkdir -p build
-	$(CXX) $(CXXFLAGS) -I$(BENCHMARK_INCLUDE) benchmarks/huff_profiler.cpp $(SOURCES) \
+	$(CXX) $(CXXFLAGS) -I$(BENCHMARK_INCLUDE) \
+		benchmarks/huff_profiler.cpp $(SOURCES) \
 		$(BENCHMARK_LIB) -lpthread \
 		-o build/huff_profiler
 
-
-build/dehuff_profiler: benchmarks/dehuff_profiler.cpp $(SOURCES) $(HEADERS)
+build/dehuff_profiler: benchmarks/dehuff_profiler.cpp $(SOURCES) $(HEADERS) Makefile
 	mkdir -p build
-	$(CXX) $(CXXFLAGS) -I$(BENCHMARK_INCLUDE) benchmarks/dehuff_profiler.cpp $(SOURCES) \
+	$(CXX) $(CXXFLAGS) -I$(BENCHMARK_INCLUDE) \
+		benchmarks/dehuff_profiler.cpp $(SOURCES) \
 		$(BENCHMARK_LIB) -lpthread \
 		-o build/dehuff_profiler
 
-
-build/corpus: benchmarks/corpus.cpp $(SOURCES) $(HEADERS)
+build/corpus: benchmarks/corpus.cpp $(SOURCES) $(HEADERS) Makefile
 	mkdir -p build
 	$(CXX) $(CXXFLAGS) benchmarks/corpus.cpp $(SOURCES) \
 		-o build/corpus
 
-
-build/tests: $(TESTS) $(SOURCES) $(HEADERS)
+build/tests: $(TESTS) $(SOURCES) $(HEADERS) Makefile
 	mkdir -p build
 	$(CXX) $(CXXFLAGS) $(TESTS) $(SOURCES) \
 		-o build/tests
-
 
 build: build/huff_profiler build/dehuff_profiler build/corpus build/tests
 
@@ -112,7 +111,6 @@ else
 	./build/huff_profiler $(BENCH_ARGS)
 endif
 
-
 profile-decompress: build/dehuff_profiler
 ifeq ($(shell uname -s),Linux)
 	taskset -c $(BENCH_CPU) ./build/dehuff_profiler $(DEHUFF_BENCH_ARGS)
@@ -120,9 +118,7 @@ else
 	./build/dehuff_profiler $(DEHUFF_BENCH_ARGS)
 endif
 
-
-# Keep profile/profile-decompress as ordinary Google Benchmark runs.
-# These optional Linux targets additionally capture CPU samples with perf.
+# Record only the benchmark process after its executable has been built.
 perf: build/huff_profiler
 ifeq ($(shell uname -s),Linux)
 	perf record $(PERF_ARGS) -o "$(PERF_DATA)" -- \
@@ -143,7 +139,8 @@ endif
 
 perf-report:
 ifeq ($(shell uname -s),Linux)
-	perf report --stdio -i "$(PERF_DATA)" > build/perf.compression.report.txt
+	perf report --stdio -i "$(PERF_DATA)" \
+		> build/perf.compression.report.txt
 else
 	@echo "Run make perf-report inside your Linux VM."
 	@exit 1
@@ -151,21 +148,19 @@ endif
 
 perf-report-decompress:
 ifeq ($(shell uname -s),Linux)
-	perf report --stdio -i "$(DEHUFF_PERF_DATA)" > build/perf.decompression.report.txt
+	perf report --stdio -i "$(DEHUFF_PERF_DATA)" \
+		> build/perf.decompression.report.txt
 else
 	@echo "Run make perf-report-decompress inside your Linux VM."
 	@exit 1
 endif
 
-
 corpus: build/corpus
 	./build/corpus "$(CORPUS_DIR)"
-
 
 tests: build/tests
 	mkdir -p build/test_output
 	./build/tests
-
 
 leak-check: build/tests
 ifeq ($(shell uname -s),Linux)
@@ -182,10 +177,9 @@ else
 	@exit 1
 endif
 
-
 clean:
 	rm -rf build
 
-
-.PHONY: build compress decompress profile profile-decompress corpus tests leak-check clean \
-        perf perf-decompress perf-report perf-report-decompress
+.PHONY: build compress decompress profile profile-decompress \
+        corpus tests leak-check clean perf perf-decompress \
+        perf-report perf-report-decompress

@@ -1,5 +1,6 @@
 #include <stdexcept>
 #include <memory>
+#include <utility>
 #include "huffman/HuffmanDecoder.hpp"
 #include "huffman/BitReader.hpp"
 
@@ -40,7 +41,7 @@ HuffmanDecoder::deserializeHelper()
     throw std::runtime_error("Invalid Huffman tree: exceeds 511 nodes.");
   }
   ++nodeCount_;
-  const uint8_t marker = reader_.readBit();
+  const std::uint8_t marker = reader_.readBit();
   if (marker == 1)
   {
     const char ch = static_cast<char>(reader_.readByte());
@@ -58,7 +59,7 @@ void HuffmanDecoder::buildLookupTable() {
   }
   for (std::size_t pattern = 0; pattern < TABLE_SIZE; ++pattern) {
     const Node* current = root.get();
-    uint8_t consumed = 0;
+    std::uint8_t consumed = 0;
 
     while (consumed < LOOKUP_BITS && !current -> isLeaf()) {
       const std::size_t shift = LOOKUP_BITS - 1 - consumed;
@@ -114,7 +115,7 @@ void HuffmanDecoder::decodeBlock(
 
   for (std::size_t i = 0; i < count; ++i)
   {
-    uint64_t pattern;
+    std::uint64_t pattern;
 
     // Fast path: decode using the lookup table.
     if (reader_.tryPeekBits(LOOKUP_BITS, pattern))
@@ -134,7 +135,7 @@ void HuffmanDecoder::decodeBlock(
 
     while (!current->isLeaf())
     {
-      const uint8_t bit = reader_.readBit();
+      const std::uint8_t bit = reader_.readBit();
 
       current = bit == 0
           ? current->left.get()

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <stdexcept>
 #include <exception>
 #include <filesystem>
 #include <iomanip>
