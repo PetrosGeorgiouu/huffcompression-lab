@@ -81,27 +81,6 @@ uint8_t BitReader::readBit()
     return bit;
 }
 
-
-bool BitReader::tryPeekBits(unsigned size, uint64_t& value) {
-    if (size > 56) {
-        throw invalid_argument("BitReader peek size exceeds 56 bits");
-    }
-    if (size == 0) {
-        value = 0;
-        return true;
-    }
-
-    if (valid_bits - current_position < size) {
-        refill();
-        if (valid_bits - current_position < size) {
-            return false;
-        }
-    }
-    value = (current_bytes << current_position) >> (64 - size);
-    return true;
-}
-
-
 uint8_t BitReader::readByte()
 {
     return static_cast<uint8_t>(readBits(8));

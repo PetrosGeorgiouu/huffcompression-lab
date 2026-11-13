@@ -13,7 +13,25 @@ class BitReader
         uint64_t readBits(uint64_t size);
         uint8_t readBit();
         uint8_t readByte();
-        bool tryPeekBits(unsigned size, uint64_t& value);
+
+        bool tryPeekBits(unsigned size, uint64_t& value) {
+            if (size > 56) {
+                throw invalid_argument("BitReader peek size exceeds 56 bits");
+            }
+            if (size == 0) {
+                value = 0;
+                return true;
+            }
+
+            if (valid_bits - current_position < size) {
+                refill();
+                if (valid_bits - current_position < size) {
+                    return false;
+                }
+            }
+            value = (current_bytes << current_position) >> (64 - size);
+            return true;
+        }
         
         void consumeBits(unsigned size) {
             assert(size <= valid_bits - current_position);
